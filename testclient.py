@@ -30,9 +30,18 @@ def assert_response(client, msg, response):
     assert data == response
 
 
-def iso8601():
-    now = datetime.datetime.now()
-    return now.strftime('%Y-%m-%dT%H:%M:%SZ')
+def assert_recvd_message(client, from_, to, msg):
+    client.send(b'recv ' + from_ + b'\0')
+    data = client.recv(1024)
+    fields = data.split(b' ', maxsplit=4)
+    assert len(fields) == 4
+    now = datetime.datetime.utcnow()
+    assert fields[0] == b'message'
+    then = datetime.datetime.strptime(fields[1], '%Y-%m-%dT%H:%M:%SZ')
+    assert abs((now - then).seconds) < 30
+    assert fields[1] == from_
+    assert fields[2] == to
+    assert fields[3] == msg
 
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as alice, \
@@ -70,19 +79,17 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as alice, \
     assert_response(bob, b'checkinbox\0', b'inbox\0')
 
     # Send a broadcast message and a direct message.
-    now = iso8601()
-    assert_success(charlotte, b'send %s * Hi guys!\0' % now)
-    assert_success(charlotte, b'send %s alice Where are you?\0' % now)
+    assert_success(charlotte, b'send * Hi guys!\0')
+    assert_success(charlotte, b'send alice Where are you?\0')
     assert_response(alice, b'checkinbox\0', b'inbox charlotte 2\0')
     assert_response(bob, b'checkinbox\0', b'inbox charlotte 1\0')
     assert_response(charlotte, b'checkinbox\0', b'inbox\0')
 
     # Make sure the oldest message is returned first.
-    response = b'message %s charlotte * Hi guys\0'
-    assert_response(alice, b'recv charlotte\0', response)
+    assert_recvd_message(alice, b'charlotte', b'*', b'Hi guys\0')
     assert_response(alice, b'checkinbox\0', b'inbox charlotte 1\0')
     response = b'message %s charlotte alice Where are you?\0'
-    assert_response(alice, b'recv charlotte\0', response)
+    assert_recvd_message(alice, b'charlotte', b'alice', b'Where are you?\0')
     assert_response(alice, b'checkinbox\0', b'inbox\0')
 
 print('All tests passed!')

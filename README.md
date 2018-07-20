@@ -45,13 +45,12 @@ returns `success`.
 The server returns `success` if the credentials match a previous `register`
 message, and `error` otherwise.
 
-`send <timestamp> <username> <message>`: Send the message to the identified
-user. The timestamp field contains the UTC time the message was sent, in the
-format e.g. 2018-07-18T17:12:47Z (ISO 8601 format). The username field may be
-an asterisk, in which case the message is sent to all users. The message field
-must not be empty (though it may contain only whitespace). The server returns
-`error` if the timestamp is in the future or more than thirty seconds in the
-past, or if the user does not exist. The server returns `success` otherwise.
+`send <username> <message>`: Send the message to the identified
+user. The username field may be an asterisk, in which case the message is sent
+to all users. The message field must not be empty (though it may contain only
+whitespace). The server returns `error` if the timestamp is in the future or
+more than thirty seconds in the past, or if the user does not exist. The server
+returns `success` otherwise.
 
 `checkinbox`: Check the client's inbox. The server returns an `inbox` message.
 
@@ -90,8 +89,10 @@ Broadcast and direct messages are received and stored in the inbox regardless of
 whether the recipient is online when the message is sent.
 
 `message <timestamp> <from> <to> <body>`: Response to the `recv` request. The
-`to` field is included to differentiate broadcast messages, denoted with an
-asterisk in the `to` field, from direct messages.
+timestamp field contains the UTC time the message was received, in the format
+e.g. 2018-07-18T17:12:47Z (ISO 8601 format).  The `to` field is included to
+differentiate broadcast messages, denoted with an asterisk in the `to` field,
+from direct messages.
 
 `filelist <file_1> ... <file_n>`: Response to the `getfilelist` request. The
 file list may be empty if no files have been uploaded to the server.

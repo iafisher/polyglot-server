@@ -66,8 +66,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as alice, \
     assert_response(alice, b'getfilelist\0', 'filelist\0')
 
     # Send a message from Alice to Bob.
-    now = iso8601()
-    assert_success(alice, b'send %s bob Hello!\0' % now)
+    assert_success(alice, b'send bob Hello!\0')
 
     # Make sure everyone's inbox is still empty except Bob's.
     assert_response(alice, b'checkinbox\0', b'inbox\0')
@@ -75,7 +74,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as alice, \
     assert_response(charlotte, b'checkinbox\0', b'inbox\0')
 
     # Retrieve the message.
-    assert_response(bob, b'recv alice\0', b'message %s alice bob Hello!' % now)
+    assert_recvd_message(bob, b'alice', b'bob', b'Hello!\0')
     assert_response(bob, b'checkinbox\0', b'inbox\0')
 
     # Send a broadcast message and a direct message.
@@ -88,7 +87,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as alice, \
     # Make sure the oldest message is returned first.
     assert_recvd_message(alice, b'charlotte', b'*', b'Hi guys\0')
     assert_response(alice, b'checkinbox\0', b'inbox charlotte 1\0')
-    response = b'message %s charlotte alice Where are you?\0'
     assert_recvd_message(alice, b'charlotte', b'alice', b'Where are you?\0')
     assert_response(alice, b'checkinbox\0', b'inbox\0')
 

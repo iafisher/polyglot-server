@@ -26,12 +26,12 @@ The server also stores user-uploaded files that are accessible to all users.
 
 ### The chat protocol
 The chat protocol comprises a set of messages that may be sent between a client
-and a server. All messages are UTF-8 encoded and terminated with a null byte
-unless otherwise noted. All messages begin with a command name, followed by zero
-or more message fields, which are denoted in the protocol specification by angle
-brackets enclosing in a descriptive name. The fields are separated by a single
-space. The command name in a message with no fields is followed immediately by
-the null byte with no intervening space.
+and a server. All messages are UTF-8 encoded and terminated with a null byte.
+All messages begin with a command name, followed by zero or more message fields,
+which are denoted in the protocol specification by angle brackets enclosing in a
+descriptive name. The fields are separated by a single space. The command name
+in a message with no fields is followed immediately by the null byte with no
+intervening space.
 
 The following messages may be sent by a client to the server. All sessions
 must begin with either a `register` or a `login` message from the client.
@@ -45,16 +45,15 @@ returns `success`.
 The server returns `success` if the credentials match a previous `register`
 message, and `error` otherwise.
 
-`send <username> <message>`: Send the message to the identified
-user. The username field may be an asterisk, in which case the message is sent
-to all users. The message field must not be empty (though it may contain only
-whitespace). The server returns `error` if the timestamp is in the future or
-more than thirty seconds in the past, or if the user does not exist. The server
-returns `success` otherwise.
+`send <recipient> <message>`: Send the message to the identified user. The
+recipient field may be an asterisk, in which case the message is sent to all
+users. The message field must not be empty (though it may contain only
+whitespace). The server returns `error` if the recipient does not exist, and
+`success` otherwise.
 
 `checkinbox`: Check the client's inbox. The server returns an `inbox` message.
 
-`recv <username>`: Receive one message that was sent by the identified user. The
+`recv <sender>`: Receive one message that was sent by the identified user. The
 server returns a `message` response, or `error` if there are no messages from
 the user. The message returned will be deleted from the client's inbox so that
 subsequent calls to `checkinbox` do not include it in the message counts.
@@ -63,8 +62,7 @@ subsequent calls to `checkinbox` do not include it in the message counts.
 file name field may not contain any whitespace or forward slashes. The file
 length field is the length of the file in bytes, and the file field is the
 actual contents of the file, as arbitrary binary data (not necessarily UTF-8
-encoded). This message does not end with a null byte (unless the file itself
-happens to). The server responds with a `success` message is the file is
+encoded). The server responds with a `success` message is the file is
 successfully uploaded, and an `error` message otherwise.
 
 `getfilelist`: Query for the names of the files that have been uploaded to the
@@ -89,8 +87,8 @@ Broadcast and direct messages are received and stored in the inbox regardless of
 whether the recipient is online when the message is sent.
 
 `message <timestamp> <from> <to> <body>`: Response to the `recv` request. The
-timestamp field contains the UTC time the message was received, in the format
-e.g. 2018-07-18T17:12:47Z (ISO 8601 format).  The `to` field is included to
+timestamp field contains the UTC time the message was received by the server, in
+ISO 8601 format (e.g. 2018-07-18T17:12:47Z). The `to` field is included to
 differentiate broadcast messages, denoted with an asterisk in the `to` field,
 from direct messages.
 
@@ -98,8 +96,7 @@ from direct messages.
 file list may be empty if no files have been uploaded to the server.
 
 `file <filename> <filelength> <file>`: Response to the `download` request. The
-fields have the same meaning as in the `upload` message. This message does not
-end with a null byte.
+fields have the same meaning as in the `upload` message.
 
 ### The chat server
 The chat server must respond to requests as described in the protocol

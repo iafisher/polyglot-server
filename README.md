@@ -40,12 +40,16 @@ must begin with either a `register` or a `login` message from the client.
 `register <username> <password>`: Create a new account. The server returns
 `error` if the username does not consist solely of alphanumeric characters and
 underscores, if the username is longer than 30 characters, if the password is
-longer than 50 characters, or if the username is already registered. Otherwise
-the server returns `success`.
+longer than 50 characters, if the username is already registered, or if the
+connection is not already logged in. Otherwise the server returns
+`success`.
 
 `login <username> <password>`: Log in to the server with the given credentials.
 The server returns `success` if the credentials match a previous `register`
-message, and `error` otherwise.
+message and the connection is not already logged in, and `error` otherwise.
+
+`logout`: Log out from the server. The server returns `error` if the connection
+is not logged in, and `success` otherwise.
 
 `send <recipient> <message>`: Send the message to the identified user. The
 recipient field may be an asterisk, in which case the message is sent to all
@@ -78,7 +82,8 @@ The following messages may be sent by the server to a client.
 
 `success`: When an operation has succeeded.
 
-`error`: When an operation has failed, or when a command could not be parsed.
+`error <msg>`: When an operation has failed, or when a command could not be
+parsed. The `msg` field may contain whitespace.
 
 `inbox <user_1> <message_count_1> ... <user_n> <message_count_n>`: Response to
 the `checkinbox` request. Each user from whom the client has unread messages is

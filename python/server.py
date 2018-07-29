@@ -43,7 +43,8 @@ class ChatServer:
             CREATE TABLE users (
                 user_id INTEGER PRIMARY KEY,
                 username varchar(30) NOT NULL,
-                password varchar(50) NOT NULL
+                password varchar(50) NOT NULL,
+                logged_in BOOLEAN NOT NULL CHECK (logged_in IN (0,1))
             );
         ''')
         cursor.execute('''
@@ -95,6 +96,8 @@ class ChatConnection(threading.Thread):
     def __init__(self, conn):
         super().__init__()
         self.socket = conn
+        # self.uid is None as long as no user is logged in on the connection.
+        self.uid = None
         # Invariant: when self.buffer is non-empty, it always aligns with the
         # start of a client message.
         # TODO: Change this to a parameter to receive_message.
@@ -102,6 +105,7 @@ class ChatConnection(threading.Thread):
 
     def run(self):
         self.db = sqlite3.connect(DB_FILE)
+        self.cursor = self.db.cursor()
         try:
             while True:
                 message = self.receive_message()
@@ -162,25 +166,57 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=2)
     def process_register(self, username, password):
-        cursor = self.db.cursor()
-        cursor.execute('''
-            SELECT username FROM users WHERE username=?
+        if self.uid is not None:
+            self.socket.send(b'error already logged in\r\n')
+            return
+
+        self.cursor.execute('''
+            SELECT username FROM users WHERE username=?;
         ''', (username,))
-        if cursor.fetchone() is None:
+        if self.cursor.fetchone() is None:
             # NOTE: Storing plaintext passwords is a terrible idea, but this
             # project is not designed to be cryptographically secure.
-            cursor.execute('''
-                INSERT INTO users (username, password) VALUES (?, ?)
-            ''', (username, password))
+            self.cursor.execute('''
+                INSERT INTO users (username, password, logged_in)
+                VALUES (?, ?, ?);
+            ''', (username, password, 1))
+            self.uid = self.cursor.lastrowid
+            self.db.commit()
+            self.socket.send(b'success\r\n')
+        else:
+            self.socket.send(b'error username already registered\r\n')
+
+    @message_handler(nfields=2)
+    def process_login(self, username, password):
+        if self.uid is not None:
+            self.socket.send(b'error already logged in\r\n')
+            return
+
+        self.cursor.execute('''
+            SELECT user_id FROM users where username=? AND password=?;
+        ''', (username, password))
+        userrow = self.cursor.fetchone()
+        if userrow is not None:
+            self.uid = userrow[0]
+            self.cursor.execute('''
+                UPDATE users SET logged_in=1 WHERE user_id=?;
+            ''', (self.uid,))
             self.db.commit()
             self.socket.send(b'success\r\n')
         else:
             self.socket.send(b'error\r\n')
-        cursor.close()
 
-    @message_handler(nfields=2)
-    def process_login(self, username, password):
-        pass
+    @message_handler(nfields=0)
+    def process_logout(self):
+        if self.uid is not None:
+            self.cursor.execute('''
+                UPDATE users SET logged_in=0 WHERE user_id=?;
+            ''', (self.uid,))
+            self.db.commit()
+            self.uid = None
+            self.socket.send(b'success\r\n')
+        else:
+            self.socket.send(b'error not logged in\r\n')
 
     @message_handler(nfields=2, ws_in_last_field=True)
     def process_send(self, recipient, message):
@@ -211,6 +247,7 @@ class ChatConnection(threading.Thread):
     dispatch = {
         b'register': process_register,
         b'login': process_login,
+        b'logout': process_logout,
         b'checkinbox': process_checkinbox,
         b'recv': process_recv,
         b'upload': process_upload,

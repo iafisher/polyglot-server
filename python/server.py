@@ -10,24 +10,57 @@ Version: July 2018
 import functools
 import os
 import socket
+import sqlite3
 import threading
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+DB_FILE = os.path.join(BASE_DIR, 'db.sqlite3')
 
 
 class ChatServer:
     def __init__(self, port=8888):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if not os.path.isfile(DB_FILE):
+            self.createdb()
 
     def run_forever(self):
         self.socket.bind((socket.gethostbyname('localhost'), self.port))
         self.socket.listen()
-        while True:
-            conn, addr = self.socket.accept()
-            conn_thread = ChatConnection(conn)
-            conn_thread.start()
+        try:
+            while True:
+                conn, addr = self.socket.accept()
+                conn_thread = ChatConnection(conn)
+                conn_thread.start()
+        finally:
+            self.socket.close()
+
+    def createdb(self):
+        db = sqlite3.connect(DB_FILE)
+        cursor = db.cursor()
+        cursor.execute('''
+            CREATE TABLE users (
+                user_id INTEGER PRIMARY KEY,
+                username varchar(30) NOT NULL,
+                password varchar(50) NOT NULL
+            );
+        ''')
+        cursor.execute('''
+            CREATE TABLE messages (
+                message_id INTEGER PRIMARY KEY,
+                timestamp varchar(25) NOT NULL,
+                source_id INTEGER NOT NULL,
+                destination varchar(30) NOT NULL,
+                inbox_id INTEGER NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES users (user_id)
+                    ON UPDATE CASCADE ON DELETE CASCADE,
+                FOREIGN KEY (inbox_id) REFERENCES users (user_id)
+                    ON UPDATE CASCADE ON DELETE CASCADE
+            );
+        ''')
+        db.commit()
+        cursor.close()
 
 
 def message_handler(nfields, ws_in_last_field=False):
@@ -44,14 +77,16 @@ def message_handler(nfields, ws_in_last_field=False):
                 try:
                     args = message.split(b' ', maxsplit=nfields)
                 except ValueError:
-                    self.socket.send(b'error\0')
+                    self.socket.send(b'error\r\n')
             else:
                 args = message.split(b' ')
 
-            if len(args) != nfields + 1:
-                self.socket.send(b'error\0')
+            # Remove the command name.
+            args.pop(0)
+            if len(args) != nfields:
+                self.socket.send(b'error\r\n')
             else:
-                f(*args)
+                f(self, *args)
         return wrapped
     return wraps
 
@@ -62,9 +97,11 @@ class ChatConnection(threading.Thread):
         self.socket = conn
         # Invariant: when self.buffer is non-empty, it always aligns with the
         # start of a client message.
+        # TODO: Change this to a parameter to receive_message.
         self.buffer = b''
 
     def run(self):
+        self.db = sqlite3.connect(DB_FILE)
         try:
             while True:
                 message = self.receive_message()
@@ -72,37 +109,38 @@ class ChatConnection(threading.Thread):
                     break
                 first_space = message.find(b' ')
                 if first_space == -1:
-                    # Commands without fields end directly with a null byte
-                    # and no space.
-                    first_space = len(message) - 1
+                    # Commands without fields end directly with CRLF and no
+                    # space.
+                    first_space = len(message) - 2
                 cmd = message[:first_space]
                 try:
                     handler = self.dispatch[cmd]
                 except KeyError:
-                    self.socket.send(b'error\0')
+                    self.socket.send(b'error\r\n')
                 else:
-                    handler(message)
+                    handler(self, message)
         finally:
             self.socket.close()
+            self.db.close()
 
     def receive_message(self):
         data = self.socket.recv(1024) if not self.buffer else self.buffer
         if not data:
             return b''
 
-        # Find the null byte that terminates the message.
-        end = data.find(b'\0')
+        # Find the message terminator.
+        end = data.find(b'\r\n')
         while end == -1:
             old_end = len(data)
             data += self.socket.recv(1024)
             if len(data) == old_end:
                 return data
-            end = data.find(b'\0', old_end)
+            end = data.find(b'\r\n', old_end)
 
         # Special parsing has to be done for the upload message, because the
-        # first null byte in the data stream could be part of the file itself
-        # and not the end of the message. To find the end, we have to read the
-        # `filelength` field.
+        # first CRLF sequence in the data stream could be part of the file
+        # itself and not the end of the message. To find the end, we have to
+        # read the `filelength` field.
         if data.startswith(b'upload '):
             second_space = data.find(b' ', 7)  # 7 == len(b'upload '')
             third_space = data.find(b' ', second_space+1)
@@ -119,12 +157,26 @@ class ChatConnection(threading.Thread):
                     data += recv_large(self.socket, length - length_so_far)
                     end = datapos + length
 
-        self.buffer = data[end+1:]
-        return data[:end+1]
+        self.buffer = data[end+2:]
+        return data[:end+2]
 
     @message_handler(nfields=2)
     def process_register(self, username, password):
-        pass
+        cursor = self.db.cursor()
+        cursor.execute('''
+            SELECT username FROM users WHERE username=?
+        ''', (username,))
+        if cursor.fetchone() is None:
+            # NOTE: Storing plaintext passwords is a terrible idea, but this
+            # project is not designed to be cryptographically secure.
+            cursor.execute('''
+                INSERT INTO users (username, password) VALUES (?, ?)
+            ''', (username, password))
+            self.db.commit()
+            self.socket.send(b'success\r\n')
+        else:
+            self.socket.send(b'error\r\n')
+        cursor.close()
 
     @message_handler(nfields=2)
     def process_login(self, username, password):

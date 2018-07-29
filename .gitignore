@@ -1,6 +1,10 @@
 *.swp
+.DS_Store
 
 # Python files
 __pycache__
 *.pyc
 *.pyo
+
+# Database files
+*.sqlite3

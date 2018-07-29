@@ -26,20 +26,22 @@ The server also stores user-uploaded files that are accessible to all users.
 
 ### The chat protocol
 The chat protocol comprises a set of messages that may be sent between a client
-and a server. All messages are UTF-8 encoded and terminated with a null byte.
-All messages begin with a command name, followed by zero or more message fields,
+and a server. All messages are UTF-8 encoded and terminated the byte sequence
+`0x0D 0x0A` (e.g., `'\r\n'` in ASCII), hereafter referred to as CRLF. All
+messages begin with a command name, followed by zero or more message fields,
 which are denoted in the protocol specification by angle brackets enclosing in a
 descriptive name. The fields are separated by a single space. The command name
-in a message with no fields is followed immediately by the null byte with no
-intervening space.
+in a message with no fields is followed immediately by CRLF, with no intervening
+space.
 
 The following messages may be sent by a client to the server. All sessions
 must begin with either a `register` or a `login` message from the client.
 
 `register <username> <password>`: Create a new account. The server returns
 `error` if the username does not consist solely of alphanumeric characters and
-underscores, or if the username is already registered. Otherwise the server
-returns `success`.
+underscores, if the username is longer than 30 characters, if the password is
+longer than 50 characters, or if the username is already registered. Otherwise
+the server returns `success`.
 
 `login <username> <password>`: Log in to the server with the given credentials.
 The server returns `success` if the credentials match a previous `register`

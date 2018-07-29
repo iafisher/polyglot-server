@@ -7,6 +7,7 @@ Author:  Ian Fisher (iafisher@protonmail.com)
 Version: July 2018
 """
 
+import datetime
 import functools
 import os
 import socket
@@ -54,6 +55,7 @@ class ChatServer:
                 source_id INTEGER NOT NULL,
                 destination varchar(30) NOT NULL,
                 inbox_id INTEGER NOT NULL,
+                body varchar(256) NOT NULL,
                 FOREIGN KEY (source_id) REFERENCES users (user_id)
                     ON UPDATE CASCADE ON DELETE CASCADE,
                 FOREIGN KEY (inbox_id) REFERENCES users (user_id)
@@ -120,7 +122,7 @@ class ChatConnection(threading.Thread):
                 try:
                     handler = self.dispatch[cmd]
                 except KeyError:
-                    self.socket.send(b'error\r\n')
+                    self.socket.send(b'error no such command\r\n')
                 else:
                     handler(self, message)
         finally:
@@ -220,6 +222,33 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=2, ws_in_last_field=True)
     def process_send(self, recipient, message):
+        if len(message) > 256:
+            self.socket.send(b'error message too long\r\n')
+            return
+
+        if recipient == '*':
+            self.broadcast_message(message)
+            return
+
+        self.cursor.execute('''
+            SELECT user_id FROM users WHERE username=?;
+        ''', (recipient,))
+        row = self.cursor.fetchone()
+        if row is not None:
+            recipient_id = row[0]
+            timestamp = datetime.datetime.utcnow() \
+                .replace(microsecond=0).isoformat() + 'Z'
+            self.cursor.execute('''
+                INSERT INTO messages (timestamp, source_id, destination,
+                    inbox_id, body)
+                VALUES (?, ?, ?, ?, ?);
+            ''', (timestamp, self.uid, recipient, recipient_id, message))
+            self.db.commit()
+            self.socket.send(b'success\r\n')
+        else:
+            self.socket.send(b'error recipient does not exist\r\n')
+
+    def broadcast_message(self, message):
         pass
 
     @message_handler(nfields=0)
@@ -248,6 +277,7 @@ class ChatConnection(threading.Thread):
         b'register': process_register,
         b'login': process_login,
         b'logout': process_logout,
+        b'send': process_send,
         b'checkinbox': process_checkinbox,
         b'recv': process_recv,
         b'upload': process_upload,

@@ -54,7 +54,9 @@ is not logged in, and `success` otherwise.
 `send <recipient> <message>`: Send the message to the identified user. The
 recipient field may be an asterisk, in which case the message is sent to all
 users. The message field must not be empty (though it may contain only
-whitespace). The server returns `error` if the recipient does not exist, and
+whitespace), it may not exceed 256 characters in length and it may not include
+the CRLF sequence except as the message terminator. The server returns `error`
+if the recipient does not exist or if the message field is ill-formatted, and
 `success` otherwise.
 
 `checkinbox`: Check the client's inbox. The server returns an `inbox` message.

@@ -8,3 +8,11 @@ __pycache__
 
 # Database files
 *.sqlite3
+
+# File server files
+/python/files/*
+!/python/files/.gitkeep
+
+# Files created temporarily by the test script
+/tmp_testfiles
+/tmp_testdb.sqlite3

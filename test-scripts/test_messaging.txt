@@ -1,0 +1,45 @@
+alice >>> register alice pwd
+success
+iafisher >>> register iafisher 123456
+success
+bob >>> register bob ajhnb375gjnajvna
+success
+
+# Inboxes should be empty.
+alice >>> checkinbox
+inbox
+iafisher >>> checkinbox
+inbox
+bob >>> checkinbox
+inbox
+
+# One direct message
+alice >>> send bob Hello!
+success
+bob >>> checkinbox
+inbox alice 1
+# Everyone else's inboxes should still be empty.
+alice >>> checkinbox
+inbox
+iafisher >>> checkinbox
+inbox
+bob >>> recv alice
+message <timestamp> alice bob Hello!
+bob >>> checkinbox
+inbox
+
+# A broadcast message
+iafisher >>> send * What's up guys?
+success
+alice >>> checkinbox
+inbox * 1
+iafisher >>> checkinbox
+inbox * 1
+bob >>> checkinbox
+inbox * 1
+alice >>> recv *
+message <timestamp> iafisher * What's up guys?
+bob >>> recv *
+message <timestamp> iafisher * What's up guys?
+iafisher >>> recv *
+message <timestamp> iafisher * What's up guys?

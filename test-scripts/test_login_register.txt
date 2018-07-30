@@ -1,0 +1,17 @@
+>>> register iafisher pwd
+success
+
+>>> login alice pwd
+error must not be logged in
+
+>>> register bob pwd123
+error must not be logged in
+
+>>> logout
+success
+
+>>> login iafisher not my password
+error wrong number of fields
+
+>>> login iafisher pwd
+success

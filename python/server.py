@@ -12,31 +12,41 @@ TODO: Replace self.socket.send(error); return with raise ChatError(...)
 TODO: argparse
 """
 
+import argparse
 import datetime
 import functools
 import os
 import socket
 import sqlite3
+import sys
 import threading
 from collections import defaultdict
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+
 FILE_DIR = os.path.join(BASE_DIR, 'files')
 DB_FILE = os.path.join(BASE_DIR, 'db.sqlite3')
+SERVER_PORT = 8888
 
 
 class ChatServer:
-    def __init__(self, port=8888, path_to_db=DB_FILE, path_to_files=FILE_DIR):
+    def __init__(self, port, path_to_db, path_to_files):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.path_to_files = path_to_files
         self.path_to_db = path_to_db
-        if not os.path.isfile(path_to_db):
-            self.createdb()
 
     def run_forever(self):
-        self.socket.bind((socket.gethostbyname('localhost'), self.port))
+        try:
+            self.socket.bind((socket.gethostbyname('localhost'), self.port))
+        except PermissionError:
+            fatal('Error: could not bind to port {} (permission denied)\n'
+                .format(self.port))
+        except OSError:
+            fatal('Error: could not bind to port {}. Is it already in use?\n'
+                .format(self.port))
+
         self.socket.listen()
         try:
             while True:
@@ -46,34 +56,6 @@ class ChatServer:
                 conn_thread.start()
         finally:
             self.socket.close()
-
-    def createdb(self):
-        db = sqlite3.connect(DB_FILE)
-        cursor = db.cursor()
-        cursor.execute('''
-            CREATE TABLE users (
-                user_id INTEGER PRIMARY KEY,
-                username varchar(30) NOT NULL,
-                password varchar(50) NOT NULL,
-                logged_in BOOLEAN NOT NULL CHECK (logged_in IN (0,1))
-            );
-        ''')
-        cursor.execute('''
-            CREATE TABLE messages (
-                message_id INTEGER PRIMARY KEY,
-                timestamp varchar(25) NOT NULL,
-                source_id INTEGER NOT NULL,
-                destination varchar(30) NOT NULL,
-                inbox_id INTEGER NOT NULL,
-                body varchar(256) NOT NULL,
-                FOREIGN KEY (source_id) REFERENCES users (user_id)
-                    ON UPDATE CASCADE ON DELETE CASCADE,
-                FOREIGN KEY (inbox_id) REFERENCES users (user_id)
-                    ON UPDATE CASCADE ON DELETE CASCADE
-            );
-        ''')
-        db.commit()
-        cursor.close()
 
 
 def message_handler(nfields, ws_in_last_field=False, auth=True, binfields=()):
@@ -247,7 +229,7 @@ class ChatConnection(threading.Thread):
             self.socket.send(b'error message too long\r\n')
             return
 
-        if recipient == '*':
+        if recipient == b'*':
             self.broadcast_message(message)
             return
 
@@ -266,6 +248,7 @@ class ChatConnection(threading.Thread):
         for row in self.cursor.fetchall():
             recipient_id = row[0]
             self.store_message('*', recipient_id, message)
+        self.socket.send(b'success\r\n')
 
     def store_message(self, recipient, recipient_id, message):
         timestamp = datetime.datetime.utcnow() \
@@ -303,14 +286,19 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=1)
     def process_recv(self, sender):
-        sender_id = self.username_to_id(sender)
-        if sender_id is None:
-            self.socket.send(b'error user does not exist\r\n')
-            return
+        if sender == b'*':
+            self.cursor.execute('''
+                SELECT * FROM messages WHERE inbox_id=? AND destination=?;
+            ''', (self.uid, b'*'))
+        else:
+            sender_id = self.username_to_id(sender)
+            if sender_id is None:
+                self.socket.send(b'error user does not exist\r\n')
+                return
+            self.cursor.execute('''
+                SELECT * FROM messages WHERE inbox_id=? AND source_id=?;
+            ''', (self.uid, sender_id))
 
-        self.cursor.execute('''
-            SELECT * FROM messages WHERE inbox_id=? AND source_id=?;
-        ''', (self.uid, sender_id))
         row = self.cursor.fetchone()
         if row is not None:
             self.cursor.execute('''
@@ -392,6 +380,29 @@ def recv_large(sock, n):
     return data
 
 
+def fatal(msg, retcode=2):
+    sys.stderr.write(msg)
+    sys.exit(retcode)
+
+
 if __name__ == '__main__':
-    server = ChatServer()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--database', default=DB_FILE,
+        help='path to a SQLite3 database to use')
+    parser.add_argument('-f', '--files', default=FILE_DIR,
+        help='path to a directory to hold files uploaded to the server')
+    parser.add_argument('-p', '--port', default=SERVER_PORT, type=int,
+        help='port for the server to listen on')
+    args = parser.parse_args()
+
+    try:
+        os.mkdir(args.files)
+    except FileExistsError:
+        pass
+    except OSError:
+        msg = 'Error: {} does not exist and could not be created\n'.format(
+            args.files)
+        fatal(msg)
+
+    server = ChatServer(args.port, args.database, args.files)
     server.run_forever()

@@ -108,7 +108,8 @@ fields have the same meaning as in the `upload` message.
 ### The chat server
 The chat server must respond to requests as described in the protocol
 specification. It must listen on port 8888. It must maintain an SQLite3 database
-of user credentials and unread messages. It must log every message it receives
+of user credentials and unread messages. The schema of the database is defined
+by `test-scripts/createdb.py`. It must log every message it receives
 and every response it returns. It must be concurrent. It must include a test
 suite.
 

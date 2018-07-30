@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -e
+
+FILE_DIR=tmp_testfiles
+TEST_DB=tmp_testdb.sqlite3
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: ./testclient <path to server executable>"
+    exit 1
+fi
+
+# Kill the background server process on exit.
+# Courtesy of https://stackoverflow.com/questions/360201/
+trap 'kill $(jobs -p)' EXIT
+
+rm -rf "$FILE_DIR" "$TEST_DB"
+
+mkdir "$FILE_DIR"
+python3 test-scripts/createdb.py "$TEST_DB"
+
+# Start the server in the background.
+$1 -f "$FILE_DIR" -d "$TEST_DB" &
+
+# Wait for the server to boot up.
+sleep 0.2
+
+for filename in test-scripts/test*.txt; do
+    [ -e "$filename" ] || continue  # Skip glob pattern if no files match.
+    python3 test-scripts/testhelper.py "$filename"
+    rm -rf "$FILE_DIR"/* "$TEST_DB"
+    python3 test-scripts/createdb.py "$TEST_DB"
+done
+
+rm -rf "$FILE_DIR" "$TEST_DB"

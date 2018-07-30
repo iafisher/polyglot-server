@@ -21,6 +21,7 @@ import sqlite3
 import sys
 import threading
 from collections import defaultdict
+from operator import itemgetter
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -247,7 +248,7 @@ class ChatConnection(threading.Thread):
         # TODO: Can probably make this more efficient.
         for row in self.cursor.fetchall():
             recipient_id = row[0]
-            self.store_message('*', recipient_id, message)
+            self.store_message(b'*', recipient_id, message)
         self.socket.send(b'success\r\n')
 
     def store_message(self, recipient, recipient_id, message):
@@ -268,7 +269,7 @@ class ChatConnection(threading.Thread):
         message_count = defaultdict(int)
         for row in self.cursor.fetchall():
             source_id, destination = row
-            if destination == '*':
+            if destination == b'*':
                 source_name = b'*'
             else:
                 self.cursor.execute('''
@@ -278,7 +279,7 @@ class ChatConnection(threading.Thread):
             message_count[source_name] += 1
 
         response_body = b' '.join(k + b' ' + str(v).encode('utf-8')
-            for k, v in message_count.items())
+            for k, v in sorted(message_count.items(), key=itemgetter(0)))
         if response_body:
             self.socket.send(b'inbox ' + response_body + b'\r\n')
         else:
@@ -305,6 +306,9 @@ class ChatConnection(threading.Thread):
                 DELETE FROM messages WHERE message_id=?;
             ''', (row[0],))
             self.db.commit()
+
+            if sender == b'*':
+                sender = self.id_to_username(row[2])
 
             timestamp = row[1]
             destination = row[3]
@@ -365,6 +369,16 @@ class ChatConnection(threading.Thread):
         self.cursor.execute('''
             SELECT user_id FROM users WHERE username=?;
         ''', (username,))
+        row = self.cursor.fetchone()
+        if row is not None:
+            return row[0]
+        else:
+            return None
+
+    def id_to_username(self, uid):
+        self.cursor.execute('''
+            SELECT username FROM users WHERE user_id=?;
+        ''', (uid,))
         row = self.cursor.fetchone()
         if row is not None:
             return row[0]

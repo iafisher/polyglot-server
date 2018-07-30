@@ -91,7 +91,9 @@ parsed. The `msg` field may contain whitespace.
 the `checkinbox` request. Each user from whom the client has unread messages is
 listed along with the count of messages. Broadcast messages are listed with the
 user as `'*'`. Broadcast and direct messages are received and stored in the
-inbox regardless of whether the recipient is online when the message is sent.
+inbox regardless of whether the recipient is online when the message is sent. A
+broadcast message is received by the user who sent it. The users are listed in
+alphabetical order.
 
 `message <timestamp> <from> <to> <body>`: Response to the `recv` request. The
 timestamp field contains the UTC time the message was received by the server, in

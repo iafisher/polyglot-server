@@ -46,6 +46,7 @@ import re
 import socket
 import sys
 import time
+from collections import defaultdict
 
 
 def assert_recv(client, expected, fpath, lineno):
@@ -66,7 +67,7 @@ def assert_recv(client, expected, fpath, lineno):
 
 line_regex = re.compile(r'([A-Za-z0-9_]*)\s*>>>\s*(.*)')
 def do_test_script(fpath):
-    clients = {}
+    clients = defaultdict(new_client)
     with open(fpath, 'r') as f:
         for lineno, line in enumerate(f, start=1):
             line = line.strip()
@@ -79,17 +80,14 @@ def do_test_script(fpath):
                 if not user:
                     user = 'default'
 
-                try:
-                    client = clients[user]
-                except KeyError:
-                    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    client.connect((socket.gethostbyname('localhost'), 8888))
-                    clients[user] = client
-
+                client = clients[user]
                 line = line_to_bytes(line)
                 client.send(line)
                 # Sleep before recv'ing to give the server time to process.
-                time.sleep(0.2)
+                # We could rely on socket.recv to block until the server
+                # responds, but if a bug in the server causes it to hang then
+                # the test suite would never exit.
+                time.sleep(0.1)
             else:
                 if not assert_recv(client, line_to_bytes(line), fpath, lineno):
                     break
@@ -103,6 +101,16 @@ def do_test_script(fpath):
             sys.stderr.write("Error, {}: unread data on {}'s socket: {}'\n"
                 .format(fpath, key, data))
         client.close()
+
+
+def new_client():
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((socket.gethostbyname('localhost'), 8888))
+        return client
+    except ConnectionError:
+        sys.stderr.write('Error: could not connect to server\n')
+        sys.exit(2)
 
 
 def line_to_bytes(line):

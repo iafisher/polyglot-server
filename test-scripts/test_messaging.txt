@@ -43,3 +43,48 @@ bob >>> recv *
 message <timestamp> iafisher * What's up guys?
 iafisher >>> recv *
 message <timestamp> iafisher * What's up guys?
+alice >>> checkinbox
+inbox
+iafisher >>> checkinbox
+inbox
+bob >>> checkinbox
+inbox
+
+# Multiple messages
+iafisher >>> send alice Hi Alice!
+success
+iafisher >>> send alice Are you there?
+success
+iafisher >>> send * Logging off now
+success
+alice >>> checkinbox
+inbox * 1 iafisher 2
+# Make sure the order of retrieval is first-sent, first-received.
+alice >>> recv iafisher
+message <timestamp> iafisher alice Hi Alice!
+alice >>> checkinbox
+inbox * 1 iafisher 1
+alice >>> recv *
+message <timestamp> iafisher * Logging off now
+alice >>> recv iafisher
+message <timestamp> iafisher alice Are you there?
+alice >>> recv iafisher
+error no messages from user
+
+# Whitespace is significant.
+alice >>> send bob    leading whitespace
+success
+bob >>> recv alice
+message <timestamp> alice bob    leading whitespace
+
+# Some error cases
+>>> send alice Hello!
+error must be logged in
+alice >>> send charlie This shouldn't work.
+error recipient does not exist
+alice >>> send bob this message is too long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+error message too long
+alice >>> send bob this message is not too long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+success
+bob >>> recv alice
+message <timestamp> alice bob this message is not too long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

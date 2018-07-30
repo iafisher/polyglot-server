@@ -5,7 +5,7 @@ set -e
 FILE_DIR=tmp_testfiles
 TEST_DB=tmp_testdb.sqlite3
 
-if [[ $# -ne 1 ]]; then
+if [[ $# -lt 1 ]]; then
     echo "Usage: ./testclient <path to server executable>"
     exit 1
 fi
@@ -25,7 +25,13 @@ $1 -f "$FILE_DIR" -d "$TEST_DB" &
 # Wait for the server to boot up.
 sleep 0.2
 
-for filename in test-scripts/test*.txt; do
+if [[ $# -eq 1 ]]; then
+    testlist=test-scripts/test*.txt
+else
+    testlist=${@:2}
+fi
+
+for filename in $testlist; do
     [ -e "$filename" ] || continue  # Skip glob pattern if no files match.
     python3 test-scripts/testhelper.py "$filename"
     rm -rf "$FILE_DIR"/* "$TEST_DB"

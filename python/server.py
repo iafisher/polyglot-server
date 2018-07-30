@@ -22,13 +22,16 @@ from collections import defaultdict
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+FILE_DIR = os.path.join(BASE_DIR, 'files')
 DB_FILE = os.path.join(BASE_DIR, 'db.sqlite3')
 
 
 class ChatServer:
-    def __init__(self, port=8888, path_to_db=DB_FILE):
+    def __init__(self, port=8888, path_to_db=DB_FILE, path_to_files=FILE_DIR):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.path_to_files = path_to_files
+        self.path_to_db = path_to_db
         if not os.path.isfile(path_to_db):
             self.createdb()
 
@@ -38,7 +41,8 @@ class ChatServer:
         try:
             while True:
                 conn, addr = self.socket.accept()
-                conn_thread = ChatConnection(conn)
+                conn_thread = ChatConnection(conn, self.path_to_db,
+                    self.path_to_files)
                 conn_thread.start()
         finally:
             self.socket.close()
@@ -118,19 +122,21 @@ def message_handler(nfields, ws_in_last_field=False, auth=True, binfields=()):
 
 
 class ChatConnection(threading.Thread):
-    def __init__(self, conn):
+    def __init__(self, conn, path_to_db, path_to_files):
         super().__init__()
         self.socket = conn
-        # self.uid and self.username are None as long as no user is logged in
-        # on the connection.
+        # self.uid is None as long as no user is logged in on the connection.
         self.uid = None
+        self.path_to_db = path_to_db
+        self.path_to_files = path_to_files
+
         # Invariant: when self.buffer is non-empty, it always aligns with the
         # start of a client message.
         # TODO: Change this to a parameter to receive_message.
         self.buffer = b''
 
     def run(self):
-        self.db = sqlite3.connect(DB_FILE)
+        self.db = sqlite3.connect(self.path_to_db)
         self.cursor = self.db.cursor()
         try:
             while True:
@@ -322,15 +328,36 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=3, ws_in_last_field=True, binfields=(4,))
     def process_upload(self, filename, filelength, filebytes):
-        pass
+        fullname = os.path.join(self.path_to_files, filename)
+        if not os.path.isfile(fullname):
+            try:
+                with open(fullname, 'wb') as f:
+                    f.write(filebytes)
+            except IOError:
+                self.socket.send(b'error could not write to file\r\n')
+            else:
+                self.socket.send(b'success\r\n')
+        else:
+            self.socket.send(b'error file already exists\r\n')
 
     @message_handler(nfields=0)
     def process_getfilelist(self):
-        pass
+        filelist = os.listdir(self.path_to_files.encode('utf-8'))
+        if filelist:
+            self.socket.send(b'filelist ' + b' '.join(filelist) + b'\r\n')
+        else:
+            self.socket.send(b'filelist\r\n')
 
     @message_handler(nfields=1)
     def process_download(self, filename):
-        pass
+        fullname = os.path.join(self.path_to_files, filename)
+        try:
+            with open(fullname, 'rb') as f:
+                data = f.read()
+            self.socket.send(b'file %b %d ' % (filename, len(data)) + data
+                + '\r\n')
+        except (IOError, FileNotFoundError):
+            self.socket.send(b'error could not read from file\r\n')
 
     # This dictionary is used to find the proper handler for a message based on
     # its first word.

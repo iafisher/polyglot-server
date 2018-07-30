@@ -17,7 +17,7 @@ trap 'kill $(jobs -p)' EXIT
 rm -rf "$FILE_DIR" "$TEST_DB"
 
 mkdir "$FILE_DIR"
-python3 test-scripts/createdb.py "$TEST_DB"
+python3 test/bin/createdb.py "$TEST_DB"
 
 # Start the server in the background.
 $1 -f "$FILE_DIR" -d "$TEST_DB" &
@@ -26,16 +26,16 @@ $1 -f "$FILE_DIR" -d "$TEST_DB" &
 sleep 0.2
 
 if [[ $# -eq 1 ]]; then
-    testlist=test-scripts/test*.txt
+    testlist=test/test*.txt
 else
     testlist=${@:2}
 fi
 
 for filename in $testlist; do
     [ -e "$filename" ] || continue  # Skip glob pattern if no files match.
-    python3 test-scripts/testhelper.py "$filename"
+    python3 test/bin/testhelper.py "$filename"
     rm -rf "$FILE_DIR"/* "$TEST_DB"
-    python3 test-scripts/createdb.py "$TEST_DB"
+    python3 test/bin/createdb.py "$TEST_DB"
 done
 
 rm -rf "$FILE_DIR" "$TEST_DB"

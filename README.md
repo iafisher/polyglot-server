@@ -89,11 +89,9 @@ parsed. The `msg` field may contain whitespace.
 
 `inbox <user_1> <message_count_1> ... <user_n> <message_count_n>`: Response to
 the `checkinbox` request. Each user from whom the client has unread messages is
-listed along with the count of messages. Broadcast messages are treated the same
-as direct messages, so if a user alice sends bob a direct message and also a
-broadcast message, then the `inbox` response will contain an entry `alice 2`.
-Broadcast and direct messages are received and stored in the inbox regardless of
-whether the recipient is online when the message is sent.
+listed along with the count of messages. Broadcast messages are listed with the
+user as `'*'`. Broadcast and direct messages are received and stored in the
+inbox regardless of whether the recipient is online when the message is sent.
 
 `message <timestamp> <from> <to> <body>`: Response to the `recv` request. The
 timestamp field contains the UTC time the message was received by the server, in

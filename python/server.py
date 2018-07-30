@@ -5,6 +5,11 @@ See the top-level directory's README file for details.
 
 Author:  Ian Fisher (iafisher@protonmail.com)
 Version: July 2018
+
+TODO: Use SQL joins.
+    https://www.w3schools.com/sql/sql_join.asp
+TODO: Replace self.socket.send(error); return with raise ChatError(...)
+TODO: argparse
 """
 
 import datetime
@@ -13,6 +18,7 @@ import os
 import socket
 import sqlite3
 import threading
+from collections import defaultdict
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -20,10 +26,10 @@ DB_FILE = os.path.join(BASE_DIR, 'db.sqlite3')
 
 
 class ChatServer:
-    def __init__(self, port=8888):
+    def __init__(self, port=8888, path_to_db=DB_FILE):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        if not os.path.isfile(DB_FILE):
+        if not os.path.isfile(path_to_db):
             self.createdb()
 
     def run_forever(self):
@@ -66,7 +72,7 @@ class ChatServer:
         cursor.close()
 
 
-def message_handler(nfields, ws_in_last_field=False):
+def message_handler(nfields, ws_in_last_field=False, auth=True, binfields=()):
     """A decorator for handler methods in the ChatConnection class.
 
     The decorator splits the message bytes into fields and sends an error if
@@ -76,18 +82,35 @@ def message_handler(nfields, ws_in_last_field=False):
     def wraps(f):
         @functools.wraps(f)
         def wrapped(self, message):
+            if auth and self.uid is None:
+                self.socket.send(b'error must be logged in\r\n')
+                return
+            elif not auth and self.uid is not None:
+                self.socket.send(b'error must not be logged in\r\n')
+                return
+
             if ws_in_last_field:
                 try:
                     args = message.split(b' ', maxsplit=nfields)
                 except ValueError:
-                    self.socket.send(b'error\r\n')
+                    self.socket.send(b'error wrong number of fields\r\n')
+                    return
             else:
                 args = message.split(b' ')
+
+            for i, arg in enumerate(args):
+                if i not in binfields:
+                    try:
+                        arg.decode('utf-8')
+                    except UnicodeDecodeError:
+                        self.socket.send(b'error invalid UTF-8\r\n')
+                        return
 
             # Remove the command name.
             args.pop(0)
             if len(args) != nfields:
-                self.socket.send(b'error\r\n')
+                self.socket.send(b'error wrong number of fields\r\n')
+                return
             else:
                 f(self, *args)
         return wrapped
@@ -98,7 +121,8 @@ class ChatConnection(threading.Thread):
     def __init__(self, conn):
         super().__init__()
         self.socket = conn
-        # self.uid is None as long as no user is logged in on the connection.
+        # self.uid and self.username are None as long as no user is logged in
+        # on the connection.
         self.uid = None
         # Invariant: when self.buffer is non-empty, it always aligns with the
         # start of a client message.
@@ -115,9 +139,8 @@ class ChatConnection(threading.Thread):
                     break
                 first_space = message.find(b' ')
                 if first_space == -1:
-                    # Commands without fields end directly with CRLF and no
-                    # space.
-                    first_space = len(message) - 2
+                    # Commands without fields are not followed by a space.
+                    first_space = len(message)
                 cmd = message[:first_space]
                 try:
                     handler = self.dispatch[cmd]
@@ -164,14 +187,10 @@ class ChatConnection(threading.Thread):
                     end = datapos + length
 
         self.buffer = data[end+2:]
-        return data[:end+2]
+        return data[:end]
 
-    @message_handler(nfields=2)
+    @message_handler(nfields=2, auth=False)
     def process_register(self, username, password):
-        if self.uid is not None:
-            self.socket.send(b'error already logged in\r\n')
-            return
-
         self.cursor.execute('''
             SELECT username FROM users WHERE username=?;
         ''', (username,))
@@ -188,12 +207,8 @@ class ChatConnection(threading.Thread):
         else:
             self.socket.send(b'error username already registered\r\n')
 
-    @message_handler(nfields=2)
+    @message_handler(nfields=2, auth=False)
     def process_login(self, username, password):
-        if self.uid is not None:
-            self.socket.send(b'error already logged in\r\n')
-            return
-
         self.cursor.execute('''
             SELECT user_id FROM users where username=? AND password=?;
         ''', (username, password))
@@ -206,7 +221,7 @@ class ChatConnection(threading.Thread):
             self.db.commit()
             self.socket.send(b'success\r\n')
         else:
-            self.socket.send(b'error\r\n')
+            self.socket.send(b'error invalid username or password\r\n')
 
     @message_handler(nfields=0)
     def process_logout(self):
@@ -230,36 +245,82 @@ class ChatConnection(threading.Thread):
             self.broadcast_message(message)
             return
 
-        self.cursor.execute('''
-            SELECT user_id FROM users WHERE username=?;
-        ''', (recipient,))
-        row = self.cursor.fetchone()
-        if row is not None:
-            recipient_id = row[0]
-            timestamp = datetime.datetime.utcnow() \
-                .replace(microsecond=0).isoformat() + 'Z'
-            self.cursor.execute('''
-                INSERT INTO messages (timestamp, source_id, destination,
-                    inbox_id, body)
-                VALUES (?, ?, ?, ?, ?);
-            ''', (timestamp, self.uid, recipient, recipient_id, message))
-            self.db.commit()
+        recipient_id = self.username_to_id(recipient)
+        if recipient_id is not None:
+            self.store_message(recipient, recipient_id, message)
             self.socket.send(b'success\r\n')
         else:
             self.socket.send(b'error recipient does not exist\r\n')
 
     def broadcast_message(self, message):
-        pass
+        self.cursor.execute('''
+            SELECT user_id FROM users;
+        ''')
+        # TODO: Can probably make this more efficient.
+        for row in self.cursor.fetchall():
+            recipient_id = row[0]
+            self.store_message('*', recipient_id, message)
+
+    def store_message(self, recipient, recipient_id, message):
+        timestamp = datetime.datetime.utcnow() \
+            .replace(microsecond=0).isoformat() + 'Z'
+        self.cursor.execute('''
+            INSERT INTO messages (timestamp, source_id, destination,
+                inbox_id, body)
+            VALUES (?, ?, ?, ?, ?);
+        ''', (timestamp, self.uid, recipient, recipient_id, message))
+        self.db.commit()
 
     @message_handler(nfields=0)
     def process_checkinbox(self):
-        pass
+        self.cursor.execute('''
+            SELECT source_id, destination FROM messages WHERE inbox_id=?;
+        ''', (self.uid,))
+        message_count = defaultdict(int)
+        for row in self.cursor.fetchall():
+            source_id, destination = row
+            if destination == '*':
+                source_name = b'*'
+            else:
+                self.cursor.execute('''
+                    SELECT username FROM users WHERE user_id=?;
+                ''', (source_id,))
+                source_name = self.cursor.fetchone()[0]
+            message_count[source_name] += 1
+
+        response_body = b' '.join(k + b' ' + str(v).encode('utf-8')
+            for k, v in message_count.items())
+        if response_body:
+            self.socket.send(b'inbox ' + response_body + b'\r\n')
+        else:
+            self.socket.send(b'inbox\r\n')
 
     @message_handler(nfields=1)
     def process_recv(self, sender):
-        pass
+        sender_id = self.username_to_id(sender)
+        if sender_id is None:
+            self.socket.send(b'error user does not exist\r\n')
+            return
 
-    @message_handler(nfields=3, ws_in_last_field=True)
+        self.cursor.execute('''
+            SELECT * FROM messages WHERE inbox_id=? AND source_id=?;
+        ''', (self.uid, sender_id))
+        row = self.cursor.fetchone()
+        if row is not None:
+            self.cursor.execute('''
+                DELETE FROM messages WHERE message_id=?;
+            ''', (row[0],))
+            self.db.commit()
+
+            timestamp = row[1]
+            destination = row[3]
+            body = row[5]
+            self.socket.send(b'message %b %b %b %b\r\n'
+                % (timestamp.encode('utf-8'), sender, destination, body))
+        else:
+            self.socket.send(b'error no messages from user\r\n')
+
+    @message_handler(nfields=3, ws_in_last_field=True, binfields=(4,))
     def process_upload(self, filename, filelength, filebytes):
         pass
 
@@ -284,6 +345,16 @@ class ChatConnection(threading.Thread):
         b'getfilelist': process_getfilelist,
         b'download': process_download,
     }
+
+    def username_to_id(self, username):
+        self.cursor.execute('''
+            SELECT user_id FROM users WHERE username=?;
+        ''', (username,))
+        row = self.cursor.fetchone()
+        if row is not None:
+            return row[0]
+        else:
+            return None
 
 
 def recv_large(sock, n):

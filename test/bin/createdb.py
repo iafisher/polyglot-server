@@ -12,8 +12,7 @@ else:
         CREATE TABLE users (
             user_id INTEGER PRIMARY KEY,
             username varchar(30) NOT NULL,
-            password varchar(50) NOT NULL,
-            logged_in BOOLEAN NOT NULL CHECK (logged_in IN (0,1))
+            password varchar(50) NOT NULL
         );
     ''')
     cursor.execute('''

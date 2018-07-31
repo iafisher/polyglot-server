@@ -1,0 +1,11 @@
+# Username cannot be longer than 30 characters.
+>>> register aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pwd
+error username longer than 30 chars
+>>> register aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pwd
+success
+
+# 30 characters, not bytes.
+>>> logout
+success
+>>> register дддддддддддддддддддддддддддддд pwd
+success

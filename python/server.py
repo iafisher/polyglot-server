@@ -35,10 +35,7 @@ class ChatServer:
     def __init__(self, port, path_to_db, path_to_files):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            self.path_to_files = path_to_files.encode('utf-8')
-        except UnicodeEncodeError:
-            fatal('Error: path to files is not valid UTF-8\n')
+        self.path_to_files = path_to_files
         self.path_to_db = path_to_db
 
     def run_forever(self):
@@ -91,7 +88,7 @@ def message_handler(nfields, ws_in_last_field=False, auth=True, binfields=()):
             for i, arg in enumerate(args):
                 if i not in binfields:
                     try:
-                        arg.decode('utf-8')
+                        args[i] = arg.decode('utf-8')
                     except UnicodeDecodeError:
                         self.socket.send(b'error invalid UTF-8\r\n')
                         return
@@ -183,6 +180,10 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_register(self, username, password):
+        if len(username) > 30:
+            self.socket.send(b'error username longer than 30 chars\r\n')
+            return
+
         self.cursor.execute('''
             SELECT username FROM users WHERE username=?;
         ''', (username,))
@@ -190,9 +191,9 @@ class ChatConnection(threading.Thread):
             # NOTE: Storing plaintext passwords is a terrible idea, but this
             # project is not designed to be cryptographically secure.
             self.cursor.execute('''
-                INSERT INTO users (username, password, logged_in)
-                VALUES (?, ?, ?);
-            ''', (username, password, 1))
+                INSERT INTO users (username, password)
+                VALUES (?, ?);
+            ''', (username, password))
             self.uid = self.cursor.lastrowid
             self.db.commit()
             self.socket.send(b'success\r\n')
@@ -207,10 +208,6 @@ class ChatConnection(threading.Thread):
         userrow = self.cursor.fetchone()
         if userrow is not None:
             self.uid = userrow[0]
-            self.cursor.execute('''
-                UPDATE users SET logged_in=1 WHERE user_id=?;
-            ''', (self.uid,))
-            self.db.commit()
             self.socket.send(b'success\r\n')
         else:
             self.socket.send(b'error invalid username or password\r\n')
@@ -218,10 +215,6 @@ class ChatConnection(threading.Thread):
     @message_handler(nfields=0)
     def process_logout(self):
         if self.uid is not None:
-            self.cursor.execute('''
-                UPDATE users SET logged_in=0 WHERE user_id=?;
-            ''', (self.uid,))
-            self.db.commit()
             self.uid = None
             self.socket.send(b'success\r\n')
         else:
@@ -233,7 +226,7 @@ class ChatConnection(threading.Thread):
             self.socket.send(b'error message too long\r\n')
             return
 
-        if recipient == b'*':
+        if recipient == '*':
             self.broadcast_message(message)
             return
 
@@ -251,7 +244,7 @@ class ChatConnection(threading.Thread):
         # TODO: Can probably make this more efficient.
         for row in self.cursor.fetchall():
             recipient_id = row[0]
-            self.store_message(b'*', recipient_id, message)
+            self.store_message('*', recipient_id, message)
         self.socket.send(b'success\r\n')
 
     def store_message(self, recipient, recipient_id, message):
@@ -272,8 +265,8 @@ class ChatConnection(threading.Thread):
         message_count = defaultdict(int)
         for row in self.cursor.fetchall():
             source_id, destination = row
-            if destination == b'*':
-                source_name = b'*'
+            if destination == '*':
+                source_name = '*'
             else:
                 self.cursor.execute('''
                     SELECT username FROM users WHERE user_id=?;
@@ -281,19 +274,20 @@ class ChatConnection(threading.Thread):
                 source_name = self.cursor.fetchone()[0]
             message_count[source_name] += 1
 
-        response_body = b' '.join(k + b' ' + str(v).encode('utf-8')
-            for k, v in sorted(message_count.items(), key=itemgetter(0)))
+        response_body = ' '.join('%s %s' % kv
+            for kv in sorted(message_count.items(), key=itemgetter(0)))
         if response_body:
-            self.socket.send(b'inbox ' + response_body + b'\r\n')
+            self.socket.send(b'inbox ' + response_body.encode('utf-8')
+                + b'\r\n')
         else:
             self.socket.send(b'inbox\r\n')
 
     @message_handler(nfields=1)
     def process_recv(self, sender):
-        if sender == b'*':
+        if sender == '*':
             self.cursor.execute('''
                 SELECT * FROM messages WHERE inbox_id=? AND destination=?;
-            ''', (self.uid, b'*'))
+            ''', (self.uid, '*'))
         else:
             sender_id = self.username_to_id(sender)
             if sender_id is None:
@@ -310,14 +304,15 @@ class ChatConnection(threading.Thread):
             ''', (row[0],))
             self.db.commit()
 
-            if sender == b'*':
+            if sender == '*':
                 sender = self.id_to_username(row[2])
+            sender = sender.encode('utf-8')
 
-            timestamp = row[1]
-            destination = row[3]
-            body = row[5]
+            timestamp = row[1].encode('utf-8')
+            destination = row[3].encode('utf-8')
+            body = row[5].encode('utf-8')
             self.socket.send(b'message %b %b %b %b\r\n'
-                % (timestamp.encode('utf-8'), sender, destination, body))
+                % (timestamp, sender, destination, body))
         else:
             self.socket.send(b'error no messages from user\r\n')
 
@@ -339,7 +334,8 @@ class ChatConnection(threading.Thread):
     def process_getfilelist(self):
         filelist = os.listdir(self.path_to_files)
         if filelist:
-            self.socket.send(b'filelist ' + b' '.join(filelist) + b'\r\n')
+            filelist = (' '.join(sorted(filelist))).encode('utf-8')
+            self.socket.send(b'filelist ' + filelist + b'\r\n')
         else:
             self.socket.send(b'filelist\r\n')
 
@@ -349,8 +345,8 @@ class ChatConnection(threading.Thread):
         try:
             with open(fullname, 'rb') as f:
                 data = f.read()
-            self.socket.send(b'file %b %d ' % (filename, len(data)) + data
-                + b'\r\n')
+            self.socket.send(b'file %b %d %b\r\n' %
+                (filename.encode('utf-8'), len(data), data))
         except (IOError, FileNotFoundError):
             self.socket.send(b'error could not read from file\r\n')
 
@@ -367,6 +363,9 @@ class ChatConnection(threading.Thread):
         b'getfilelist': process_getfilelist,
         b'download': process_download,
     }
+
+    def send_utf8(self, msg):
+        self.socket.send(msg.encode('utf-8') + b'\r\n')
 
     def username_to_id(self, username):
         self.cursor.execute('''

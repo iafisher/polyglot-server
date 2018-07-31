@@ -1,0 +1,14 @@
+>>> logout
+error must be logged in
+>>> send alice Hello!
+error must be logged in
+>>> checkinbox
+error must be logged in
+>>> recv alice
+error must be logged in
+>>> upload hello.txt 5 hello
+error must be logged in
+>>> download hello.txt
+error must be logged in
+>>> getfilelist
+error must be logged in

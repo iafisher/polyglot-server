@@ -9,3 +9,8 @@ success
 success
 >>> register дддддддддддддддддддддддддддддд pwd
 success
+
+# TODO
+# - Passwords longer than 50 chars
+# - Invalid UTF-8
+# - Files longer than 1024 bytes

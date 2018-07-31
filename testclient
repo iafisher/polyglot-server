@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+#
+# A generic test suite for chat server implementations in any language.
+#
+# It runs the test scripts in the test/ directory using test/bin/testhelper.py
 
 set -e
 

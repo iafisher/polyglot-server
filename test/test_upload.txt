@@ -1,0 +1,21 @@
+iafisher >>> register iafisher pwd
+success
+alice >>> register alice password
+success
+
+iafisher >>> b'upload hello.txt 6 hello\n\r\n'
+success
+
+alice >>> download hello.txt
+b'file hello.txt 6 hello\n\r\n'
+
+# Cannot overwrite pre-existing file.
+alice >>> upload hello.txt 7 goodbye
+error file already exists
+
+# Try uploading binary data.
+alice >>> b'upload junk.bin 5 \xff\xff\xff\xff\xff\r\n'
+success
+
+iafisher >>> download junk.bin
+b'file junk.bin 5 \xff\xff\xff\xff\xff\r\n'

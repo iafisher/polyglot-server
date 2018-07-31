@@ -35,7 +35,10 @@ class ChatServer:
     def __init__(self, port, path_to_db, path_to_files):
         self.port = port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.path_to_files = path_to_files
+        try:
+            self.path_to_files = path_to_files.encode('utf-8')
+        except UnicodeEncodeError:
+            fatal('Error: path to files is not valid UTF-8\n')
         self.path_to_db = path_to_db
 
     def run_forever(self):
@@ -178,7 +181,7 @@ class ChatConnection(threading.Thread):
         self.buffer = data[end+2:]
         return data[:end]
 
-    @message_handler(nfields=2, auth=False)
+    @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_register(self, username, password):
         self.cursor.execute('''
             SELECT username FROM users WHERE username=?;
@@ -196,7 +199,7 @@ class ChatConnection(threading.Thread):
         else:
             self.socket.send(b'error username already registered\r\n')
 
-    @message_handler(nfields=2, auth=False)
+    @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_login(self, username, password):
         self.cursor.execute('''
             SELECT user_id FROM users where username=? AND password=?;
@@ -318,7 +321,7 @@ class ChatConnection(threading.Thread):
         else:
             self.socket.send(b'error no messages from user\r\n')
 
-    @message_handler(nfields=3, ws_in_last_field=True, binfields=(4,))
+    @message_handler(nfields=3, ws_in_last_field=True, binfields=(3,))
     def process_upload(self, filename, filelength, filebytes):
         fullname = os.path.join(self.path_to_files, filename)
         if not os.path.isfile(fullname):
@@ -334,7 +337,7 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=0)
     def process_getfilelist(self):
-        filelist = os.listdir(self.path_to_files.encode('utf-8'))
+        filelist = os.listdir(self.path_to_files)
         if filelist:
             self.socket.send(b'filelist ' + b' '.join(filelist) + b'\r\n')
         else:
@@ -347,7 +350,7 @@ class ChatConnection(threading.Thread):
             with open(fullname, 'rb') as f:
                 data = f.read()
             self.socket.send(b'file %b %d ' % (filename, len(data)) + data
-                + '\r\n')
+                + b'\r\n')
         except (IOError, FileNotFoundError):
             self.socket.send(b'error could not read from file\r\n')
 

@@ -11,7 +11,13 @@ error must not be logged in
 success
 
 >>> login iafisher not my password
-error wrong number of fields
+error invalid username or password
 
 >>> login iafisher pwd
+success
+
+>>> logout
+success
+
+>>> register bob A strong password: 2018
 success

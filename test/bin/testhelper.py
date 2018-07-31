@@ -52,7 +52,7 @@ from collections import defaultdict
 def assert_recv(client, expected, fpath, lineno):
     loc = '{}:{}'.format(fpath, lineno)
     try:
-        data = client.recv(1024, socket.MSG_DONTWAIT)
+        data = client.recv(1024)
     except BlockingIOError:
         sys.stderr.write('Error, {}: expected {!r}, got nothing\n'.format(
             loc, expected))
@@ -83,15 +83,11 @@ def do_test_script(fpath):
                 client = clients[user]
                 line = line_to_bytes(line)
                 client.send(line)
-                # Sleep before recv'ing to give the server time to process.
-                # We could rely on socket.recv to block until the server
-                # responds, but if a bug in the server causes it to hang then
-                # the test suite would never exit.
-                time.sleep(0.1)
             else:
                 if not assert_recv(client, line_to_bytes(line), fpath, lineno):
                     break
 
+    time.sleep(0.1)
     for key, client in clients.items():
         try:
             data = client.recv(1024, socket.MSG_DONTWAIT)

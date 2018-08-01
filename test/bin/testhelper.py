@@ -31,6 +31,11 @@ A timestamp can be matched with the literal string '<timestamp>', e.g.:
    alice >>> recv bob
    message <timestamp> bob alice Hello!
 
+Only one timestamp may be matched per line, and a timestamp will not be matched
+within a bytestring literal, e.g.:
+
+   b'file devious.txt 11 <timestamp>\r\n'  # Matches literal b'<timestamp>'
+
 Each test script runs with a clean database and file directory.
 
 To run the test suite, use the testclient script in the project's root
@@ -53,14 +58,14 @@ def assert_recv(client, expected, fpath, lineno):
     loc = '{}:{}'.format(fpath, lineno)
     try:
         data = client.recv(1024)
-    except BlockingIOError:
+    except KeyboardInterrupt:
         sys.stderr.write('Error, {}: expected {!r}, got nothing\n'.format(
             loc, expected))
         return False
     else:
         if not equivalent(expected, data):
-            sys.stderr.write('Error, {}: expected {!r}, got {!r}\n'.format(
-                loc, expected, data))
+            sys.stderr.write('Error, {}:\n expected {!r}\n got      {!r}\n'
+                .format(loc, expected, data))
             return False
     return True
 
@@ -81,8 +86,7 @@ def do_test_script(fpath):
                     user = 'default'
 
                 client = clients[user]
-                line = line_to_bytes(line)
-                client.send(line)
+                client.send(line_to_bytes(line))
             else:
                 if not assert_recv(client, line_to_bytes(line), fpath, lineno):
                     break
@@ -116,22 +120,16 @@ def line_to_bytes(line):
         return line.encode('utf-8') + b'\r\n'
 
 
-timestamp_regex = re.compile(rb'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
 def equivalent(expected, got):
-    """Return True if the two bytestrings are equivalent, except that the
-    sequence b'<timestamp>' in `expected` matches an actul ISO 8601 timestamp
-    in `got`.
-    """
     index = expected.find(b'<timestamp>')
     if index != -1:
-        next_space = got.find(b' ', index)
+        next_space = got.find(b' ', index + 1)
         if next_space == -1:
-            return False
-        if not timestamp_regex.match(got[index:next_space]):
-            return False
-        expected = expected[:index] + expected[index+11:]
-        got = got[:index] + got[next_space:]
-    return expected == got
+            next_space = len(got)
+        return expected[:index] == got[:index] \
+            and equivalent(expected[index+11:], got[next_space:])
+    else:
+        return expected == got
 
 
 if len(sys.argv) != 2:

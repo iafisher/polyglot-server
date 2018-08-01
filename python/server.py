@@ -258,63 +258,28 @@ class ChatConnection(threading.Thread):
         self.db.commit()
 
     @message_handler(nfields=0)
-    def process_checkinbox(self):
+    def process_recv(self):
         self.cursor.execute('''
-            SELECT source_id, destination FROM messages WHERE inbox_id=?;
+            SELECT * FROM messages WHERE inbox_id=? ORDER BY message_id;
         ''', (self.uid,))
-        message_count = defaultdict(int)
-        for row in self.cursor.fetchall():
-            source_id, destination = row
-            if destination == '*':
-                source_name = '*'
-            else:
-                self.cursor.execute('''
-                    SELECT username FROM users WHERE user_id=?;
-                ''', (source_id,))
-                source_name = self.cursor.fetchone()[0]
-            message_count[source_name] += 1
+        rows = self.cursor.fetchall()
+        self.cursor.execute('''
+            DELETE FROM messages WHERE inbox_id=?;
+        ''', (self.uid,))
+        self.db.commit()
 
-        response_body = ' '.join('%s %s' % kv
-            for kv in sorted(message_count.items(), key=itemgetter(0)))
-        if response_body:
-            self.socket.send(b'inbox ' + response_body.encode('utf-8')
-                + b'\r\n')
-        else:
-            self.socket.send(b'inbox\r\n')
-
-    @message_handler(nfields=1)
-    def process_recv(self, sender):
-        if sender == '*':
-            self.cursor.execute('''
-                SELECT * FROM messages WHERE inbox_id=? AND destination=?;
-            ''', (self.uid, '*'))
-        else:
-            sender_id = self.username_to_id(sender)
-            if sender_id is None:
-                self.socket.send(b'error user does not exist\r\n')
-                return
-            self.cursor.execute('''
-                SELECT * FROM messages WHERE inbox_id=? AND source_id=?;
-            ''', (self.uid, sender_id))
-
-        row = self.cursor.fetchone()
-        if row is not None:
-            self.cursor.execute('''
-                DELETE FROM messages WHERE message_id=?;
-            ''', (row[0],))
-            self.db.commit()
-
-            if sender == '*':
+        if rows:
+            msgs = []
+            for row in rows:
+                timestamp = row[1]
                 sender = self.id_to_username(row[2])
-            sender = sender.encode('utf-8')
-
-            timestamp = row[1].encode('utf-8')
-            destination = row[3].encode('utf-8')
-            body = row[5].encode('utf-8')
-            self.socket.send(b'message %b %b %b %b\r\n'
-                % (timestamp, sender, destination, body))
+                destination = row[3]
+                body = row[5]
+                msgs.append('message {} {} {} {}\r\n'.format(timestamp, sender,
+                    destination, body))
+            self.socket.send(''.join(msgs).encode('utf-8'))
         else:
-            self.socket.send(b'error no messages from user\r\n')
+            self.socket.send(b'error inbox is empty\r\n')
 
     @message_handler(nfields=3, ws_in_last_field=True, binfields=(3,))
     def process_upload(self, filename, filelength, filebytes):

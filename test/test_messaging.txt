@@ -6,49 +6,41 @@ bob >>> register bob ajhnb375gjnajvna
 success
 
 # Inboxes should be empty.
-alice >>> checkinbox
-inbox
-iafisher >>> checkinbox
-inbox
-bob >>> checkinbox
-inbox
+alice >>> recv
+error inbox is empty
+iafisher >>> recv
+error inbox is empty
+bob >>> recv
+error inbox is empty
 
 # One direct message
 alice >>> send bob Hello!
 success
-bob >>> checkinbox
-inbox alice 1
 # Everyone else's inboxes should still be empty.
-alice >>> checkinbox
-inbox
-iafisher >>> checkinbox
-inbox
-bob >>> recv alice
+alice >>> recv
+error inbox is empty
+iafisher >>> recv
+error inbox is empty
+bob >>> recv
 message <timestamp> alice bob Hello!
-bob >>> checkinbox
-inbox
+bob >>> recv
+error inbox is empty
 
 # A broadcast message
 iafisher >>> send * What's up guys?
 success
-alice >>> checkinbox
-inbox * 1
-iafisher >>> checkinbox
-inbox * 1
-bob >>> checkinbox
-inbox * 1
-alice >>> recv *
+alice >>> recv
 message <timestamp> iafisher * What's up guys?
-bob >>> recv *
+bob >>> recv
 message <timestamp> iafisher * What's up guys?
-iafisher >>> recv *
+iafisher >>> recv
 message <timestamp> iafisher * What's up guys?
-alice >>> checkinbox
-inbox
-iafisher >>> checkinbox
-inbox
-bob >>> checkinbox
-inbox
+alice >>> recv
+error inbox is empty
+iafisher >>> recv
+error inbox is empty
+bob >>> recv
+error inbox is empty
 
 # Multiple messages
 iafisher >>> send alice Hi Alice!
@@ -57,24 +49,22 @@ iafisher >>> send alice Are you there?
 success
 iafisher >>> send * Logging off now
 success
-alice >>> checkinbox
-inbox * 1 iafisher 2
 # Make sure the order of retrieval is first-sent, first-received.
-alice >>> recv iafisher
-message <timestamp> iafisher alice Hi Alice!
-alice >>> checkinbox
-inbox * 1 iafisher 1
-alice >>> recv *
+alice >>> recv
+b"message <timestamp> iafisher alice Hi Alice!\r\nmessage <timestamp> iafisher alice Are you there?\r\nmessage <timestamp> iafisher * Logging off now\r\n"
+alice >>> recv
+error inbox is empty
+
+# Clear the last broadcast message.
+iafisher >>> recv
 message <timestamp> iafisher * Logging off now
-alice >>> recv iafisher
-message <timestamp> iafisher alice Are you there?
-alice >>> recv iafisher
-error no messages from user
+bob >>> recv
+message <timestamp> iafisher * Logging off now
 
 # Whitespace is significant.
 alice >>> send bob    leading whitespace
 success
-bob >>> recv alice
+bob >>> recv
 message <timestamp> alice bob    leading whitespace
 
 # Some error cases
@@ -86,5 +76,5 @@ alice >>> send bob this message is too long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 error message too long
 alice >>> send bob this message is not too long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 success
-bob >>> recv alice
+bob >>> recv
 message <timestamp> alice bob this message is not too long: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

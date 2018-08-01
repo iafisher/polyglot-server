@@ -59,12 +59,10 @@ the CRLF sequence except as the message terminator. The server returns `error`
 if the recipient does not exist or if the message field is ill-formatted, and
 `success` otherwise.
 
-`checkinbox`: Check the client's inbox. The server returns an `inbox` message.
-
-`recv <sender>`: Receive one message that was sent by the identified user. The
-server returns a `message` response, or `error` if there are no messages from
-the user. The message returned will be deleted from the client's inbox so that
-subsequent calls to `checkinbox` do not include it in the message counts.
+`recv`: Receive all messages in the user's inbox. The server returns
+an `error` response if there are no messages, and a series of `message`
+responses otherwise. The messages returned will be deleted from the client's
+inbox.
 
 `upload <filename> <filelength> <file>`: Upload the file to the server. The
 file name field may not contain any whitespace or forward slashes. The file
@@ -86,14 +84,6 @@ The following messages may be sent by the server to a client.
 
 `error <msg>`: When an operation has failed, or when a command could not be
 parsed. The `msg` field may contain whitespace.
-
-`inbox <user_1> <message_count_1> ... <user_n> <message_count_n>`: Response to
-the `checkinbox` request. Each user from whom the client has unread messages is
-listed along with the count of messages. Broadcast messages are listed with the
-user as `'*'`. Broadcast and direct messages are received and stored in the
-inbox regardless of whether the recipient is online when the message is sent. A
-broadcast message is received by the user who sent it. The users are listed in
-alphabetical order.
 
 `message <timestamp> <from> <to> <body>`: Response to the `recv` request. The
 timestamp field contains the UTC time the message was received by the server, in

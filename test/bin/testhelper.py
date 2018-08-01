@@ -31,11 +31,6 @@ A timestamp can be matched with the literal string '<timestamp>', e.g.:
    alice >>> recv bob
    message <timestamp> bob alice Hello!
 
-Only one timestamp may be matched per line, and a timestamp will not be matched
-within a bytestring literal, e.g.:
-
-   b'file devious.txt 11 <timestamp>\r\n'  # Matches literal b'<timestamp>'
-
 Each test script runs with a clean database and file directory.
 
 To run the test suite, use the testclient script in the project's root

@@ -6,6 +6,9 @@ __pycache__
 *.pyc
 *.pyo
 
+# Rust files
+/rust/polyglot_server/target
+
 # Database files
 *.sqlite3
 

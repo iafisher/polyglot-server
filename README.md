@@ -71,7 +71,7 @@ actual contents of the file, as arbitrary binary data (not necessarily UTF-8
 encoded). The server responds with a `success` message is the file is
 successfully uploaded, and an `error` message otherwise.
 
-`getfilelist`: Query for the names of the files that have been uploaded to the
+`listfiles`: Query for the names of the files that have been uploaded to the
 server. The server returns a `filelist` message.
 
 `download <filename>`: Download a file from the server. The server returns
@@ -91,8 +91,8 @@ ISO 8601 format (e.g. 2018-07-18T17:12:47Z). The `to` field is included to
 differentiate broadcast messages, denoted with an asterisk in the `to` field,
 from direct messages.
 
-`filelist <file_1> ... <file_n>`: Response to the `getfilelist` request. The
-file list may be empty if no files have been uploaded to the server.
+`filelist <file_1> ... <file_n>`: Response to the `listfiles` request. The file
+list may be empty if no files have been uploaded to the server.
 
 `file <filename> <filelength> <file>`: Response to the `download` request. The
 fields have the same meaning as in the `upload` message.

@@ -296,7 +296,7 @@ class ChatConnection(threading.Thread):
             self.socket.send(b'error file already exists\r\n')
 
     @message_handler(nfields=0)
-    def process_getfilelist(self):
+    def process_listfiles(self):
         filelist = os.listdir(self.path_to_files)
         if filelist:
             filelist = (' '.join(sorted(filelist))).encode('utf-8')
@@ -322,10 +322,9 @@ class ChatConnection(threading.Thread):
         b'login': process_login,
         b'logout': process_logout,
         b'send': process_send,
-        b'checkinbox': process_checkinbox,
         b'recv': process_recv,
         b'upload': process_upload,
-        b'getfilelist': process_getfilelist,
+        b'listfiles': process_listfiles,
         b'download': process_download,
     }
 

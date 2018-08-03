@@ -8,8 +8,6 @@ Version: July 2018
 
 TODO: Use SQL joins.
     https://www.w3schools.com/sql/sql_join.asp
-TODO: Replace self.socket.send(error); return with raise ChatError(...)
-TODO: argparse
 """
 
 import argparse
@@ -20,8 +18,6 @@ import socket
 import sqlite3
 import sys
 import threading
-from collections import defaultdict
-from operator import itemgetter
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -59,11 +55,18 @@ class ChatServer:
             self.socket.close()
 
 
-def message_handler(nfields, ws_in_last_field=False, auth=True, binfields=()):
+def message_handler(nfields, ws_in_last_field=False, auth=True, last_field_binary=False):
     """A decorator for handler methods in the ChatConnection class.
 
     The decorator splits the message bytes into fields and sends an error if
     the message is ill-formatted.
+
+    Parameters:
+        nfields: How many space-separated fields does the message contain,
+            excluding the command name itself?
+        ws_in_last_field: Does the last field allow whitespace?
+        auth: Must the user be logged in?
+        last_field_binary: Does the last field allow arbitrary bytes?
     """
 
     def wraps(f):
@@ -85,13 +88,12 @@ def message_handler(nfields, ws_in_last_field=False, auth=True, binfields=()):
             else:
                 args = message.split(b' ')
 
-            for i, arg in enumerate(args):
-                if i not in binfields:
-                    try:
-                        args[i] = arg.decode('utf-8')
-                    except UnicodeDecodeError:
-                        self.socket.send(b'error invalid UTF-8\r\n')
-                        return
+            for i, arg in enumerate(args[:-1] if last_field_binary else args):
+                try:
+                    args[i] = arg.decode('utf-8')
+                except UnicodeDecodeError:
+                    self.socket.send(b'error invalid UTF-8\r\n')
+                    return
 
             # Remove the command name.
             args.pop(0)
@@ -125,17 +127,23 @@ class ChatConnection(threading.Thread):
                 message, buffer = self.receive_message(buffer)
                 if not message:
                     break
+
                 first_space = message.find(b' ')
                 if first_space == -1:
                     # Commands without fields are not followed by a space.
                     first_space = len(message)
+
                 cmd = message[:first_space]
                 try:
                     handler = self.dispatch[cmd]
                 except KeyError:
                     self.socket.send(b'error no such command\r\n')
                 else:
-                    handler(self, message)
+                    try:
+                        handler(self, message)
+                    except ChatError as e:
+                        self.socket.send(b'error ' + str(e).encode('utf-8')
+                            + b'\r\n')
         finally:
             self.socket.close()
             self.db.close()
@@ -179,8 +187,7 @@ class ChatConnection(threading.Thread):
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_register(self, username, password):
         if len(username) > 30:
-            self.socket.send(b'error username longer than 30 chars\r\n')
-            return
+            raise ChatError('username longer than 30 chars')
 
         self.cursor.execute('''
             SELECT username FROM users WHERE username=?;
@@ -196,7 +203,7 @@ class ChatConnection(threading.Thread):
             self.db.commit()
             self.socket.send(b'success\r\n')
         else:
-            self.socket.send(b'error username already registered\r\n')
+            raise ChatError('username is already registered')
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_login(self, username, password):
@@ -208,37 +215,30 @@ class ChatConnection(threading.Thread):
             self.uid = userrow[0]
             self.socket.send(b'success\r\n')
         else:
-            self.socket.send(b'error invalid username or password\r\n')
+            raise ChatError('invalid username or password')
 
     @message_handler(nfields=0)
     def process_logout(self):
-        if self.uid is not None:
-            self.uid = None
-            self.socket.send(b'success\r\n')
-        else:
-            self.socket.send(b'error not logged in\r\n')
+        self.uid = None
+        self.socket.send(b'success\r\n')
 
     @message_handler(nfields=2, ws_in_last_field=True)
     def process_send(self, recipient, message):
         if len(message) > 256:
-            self.socket.send(b'error message too long\r\n')
-            return
+            raise ChatError('message too long')
 
         if recipient == '*':
             self.broadcast_message(message)
-            return
-
-        recipient_id = self.username_to_id(recipient)
-        if recipient_id is not None:
-            self.store_message(recipient, recipient_id, message)
-            self.socket.send(b'success\r\n')
         else:
-            self.socket.send(b'error recipient does not exist\r\n')
+            recipient_id = self.username_to_id(recipient)
+            if recipient_id is not None:
+                self.store_message(recipient, recipient_id, message)
+                self.socket.send(b'success\r\n')
+            else:
+                raise ChatError('recipient does not exist')
 
     def broadcast_message(self, message):
-        self.cursor.execute('''
-            SELECT user_id FROM users;
-        ''')
+        self.cursor.execute('SELECT user_id FROM users;')
         # TODO: Can probably make this more efficient.
         for row in self.cursor.fetchall():
             recipient_id = row[0]
@@ -246,8 +246,7 @@ class ChatConnection(threading.Thread):
         self.socket.send(b'success\r\n')
 
     def store_message(self, recipient, recipient_id, message):
-        timestamp = datetime.datetime.utcnow() \
-            .replace(microsecond=0).isoformat() + 'Z'
+        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
         self.cursor.execute('''
             INSERT INTO messages (timestamp, source_id, destination,
                 inbox_id, body)
@@ -257,10 +256,13 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=0)
     def process_recv(self):
+        # Get all outstanding messages to the user.
         self.cursor.execute('''
             SELECT * FROM messages WHERE inbox_id=? ORDER BY message_id;
         ''', (self.uid,))
         rows = self.cursor.fetchall()
+
+        # Delete the messages retrieved.
         self.cursor.execute('''
             DELETE FROM messages WHERE inbox_id=?;
         ''', (self.uid,))
@@ -277,9 +279,9 @@ class ChatConnection(threading.Thread):
                     destination, body))
             self.socket.send(''.join(msgs).encode('utf-8'))
         else:
-            self.socket.send(b'error inbox is empty\r\n')
+            raise ChatError('inbox is empty')
 
-    @message_handler(nfields=3, ws_in_last_field=True, binfields=(3,))
+    @message_handler(nfields=3, ws_in_last_field=True, last_field_binary=True)
     def process_upload(self, filename, filelength, filebytes):
         fullname = os.path.join(self.path_to_files, filename)
         if not os.path.isfile(fullname):
@@ -287,11 +289,11 @@ class ChatConnection(threading.Thread):
                 with open(fullname, 'wb') as f:
                     f.write(filebytes)
             except IOError:
-                self.socket.send(b'error could not write to file\r\n')
+                raise ChatError('could not write to file')
             else:
                 self.socket.send(b'success\r\n')
         else:
-            self.socket.send(b'error file already exists\r\n')
+            raise ChatError('file already exists')
 
     @message_handler(nfields=0)
     def process_listfiles(self):
@@ -311,7 +313,7 @@ class ChatConnection(threading.Thread):
             self.socket.send(b'file %b %d %b\r\n' %
                 (filename.encode('utf-8'), len(data), data))
         except (IOError, FileNotFoundError):
-            self.socket.send(b'error could not read from file\r\n')
+            raise ChatError('could not read from file')
 
     # This dictionary is used to find the proper handler for a message based on
     # its first word.
@@ -325,9 +327,6 @@ class ChatConnection(threading.Thread):
         b'listfiles': process_listfiles,
         b'download': process_download,
     }
-
-    def send_utf8(self, msg):
-        self.socket.send(msg.encode('utf-8') + b'\r\n')
 
     def username_to_id(self, username):
         self.cursor.execute('''
@@ -348,6 +347,10 @@ class ChatConnection(threading.Thread):
             return row[0]
         else:
             return None
+
+
+class ChatError(Exception):
+    pass
 
 
 def recv_large(sock, n):

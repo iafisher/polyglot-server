@@ -55,6 +55,12 @@ class ChatServer:
             self.socket.close()
 
 
+# A Python version of Rust's Result type--more efficient than raising an
+# exception.
+Result = lambda r: (r, None)
+Error = lambda e: (None, e)
+
+
 def message_handler(nfields, ws_in_last_field=False, auth=True, last_field_binary=False):
     """A decorator for handler methods in the ChatConnection class.
 
@@ -73,15 +79,15 @@ def message_handler(nfields, ws_in_last_field=False, auth=True, last_field_binar
         @functools.wraps(f)
         def wrapped(self, message):
             if auth and self.uid is None:
-                raise ChatError('must be logged in')
+                return Error('must be logged in')
             elif not auth and self.uid is not None:
-                raise ChatError('must not be logged in')
+                return Error('must not be logged in')
 
             if ws_in_last_field:
                 try:
                     args = message.split(b' ', maxsplit=nfields)
                 except ValueError:
-                    raise ChatError('wrong number of fields')
+                    return Error('wrong number of fields')
             else:
                 args = message.split(b' ')
 
@@ -89,12 +95,12 @@ def message_handler(nfields, ws_in_last_field=False, auth=True, last_field_binar
                 try:
                     args[i] = arg.decode('utf-8')
                 except UnicodeDecodeError:
-                    raise ChatError('invalid UTF-8')
+                    return Error('invalid UTF-8')
 
             # Remove the command name.
             args.pop(0)
             if len(args) != nfields:
-                raise ChatError('wrong number of fields')
+                return Error('wrong number of fields')
             else:
                 return f(self, *args)
         return wrapped
@@ -134,10 +140,9 @@ class ChatConnection(threading.Thread):
                 except KeyError:
                     self.socket.send(b'error no such command\r\n')
                 else:
-                    try:
-                        response = handler(self, message)
-                    except ChatError as e:
-                        self.socket.send(b'error ' + str(e).encode('utf-8')
+                    response, error = handler(self, message)
+                    if error is not None:
+                        self.socket.send(b'error ' + error.encode('utf-8')
                             + b'\r\n')
                     else:
                         if isinstance(response, str):
@@ -186,7 +191,7 @@ class ChatConnection(threading.Thread):
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_register(self, username, password):
         if len(username) > 30:
-            raise ChatError('username longer than 30 chars')
+            return Error('username longer than 30 chars')
 
         self.cursor.execute('''
             SELECT username FROM users WHERE username=?;
@@ -200,9 +205,9 @@ class ChatConnection(threading.Thread):
             ''', (username, password))
             self.uid = self.cursor.lastrowid
             self.db.commit()
-            return 'success'
+            return Result('success')
         else:
-            raise ChatError('username is already registered')
+            return Error('username is already registered')
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_login(self, username, password):
@@ -212,30 +217,30 @@ class ChatConnection(threading.Thread):
         userrow = self.cursor.fetchone()
         if userrow is not None:
             self.uid = userrow[0]
-            return 'success'
+            return Result('success')
         else:
-            raise ChatError('invalid username or password')
+            return Error('invalid username or password')
 
     @message_handler(nfields=0)
     def process_logout(self):
         self.uid = None
-        return 'success'
+        return Result('success')
 
     @message_handler(nfields=2, ws_in_last_field=True)
     def process_send(self, recipient, message):
         if len(message) > 256:
-            raise ChatError('message too long')
+            return Error('message too long')
 
         if recipient == '*':
             self.broadcast_message(message)
-            return 'success'
+            return Result('success')
         else:
             recipient_id = self.username_to_id(recipient)
             if recipient_id is not None:
                 self.store_message(recipient, recipient_id, message)
-                return 'success'
+                return Result('success')
             else:
-                raise ChatError('recipient does not exist')
+                return Error('recipient does not exist')
 
     def broadcast_message(self, message):
         self.cursor.execute('SELECT user_id FROM users;')
@@ -276,9 +281,9 @@ class ChatConnection(threading.Thread):
                 body = row[5]
                 msgs.append('message {} {} {} {}'.format(timestamp, sender,
                     destination, body))
-            return '\r\n'.join(msgs)
+            return Result('\r\n'.join(msgs))
         else:
-            raise ChatError('inbox is empty')
+            return Error('inbox is empty')
 
     @message_handler(nfields=3, ws_in_last_field=True, last_field_binary=True)
     def process_upload(self, filename, filelength, filebytes):
@@ -288,19 +293,19 @@ class ChatConnection(threading.Thread):
                 with open(fullname, 'wb') as f:
                     f.write(filebytes)
             except IOError:
-                raise ChatError('could not write to file')
+                return Error('could not write to file')
             else:
-                return 'success'
+                return Result('success')
         else:
-            raise ChatError('file already exists')
+            return Error('file already exists')
 
     @message_handler(nfields=0)
     def process_listfiles(self):
         filelist = os.listdir(self.path_to_files)
         if filelist:
-            return 'filelist ' + ' '.join(sorted(filelist))
+            return Result('filelist ' + ' '.join(sorted(filelist)))
         else:
-            return 'filelist'
+            return Result('filelist')
 
     @message_handler(nfields=1)
     def process_download(self, filename):
@@ -308,10 +313,10 @@ class ChatConnection(threading.Thread):
         try:
             with open(fullname, 'rb') as f:
                 data = f.read()
-            return b'file %b %d %b\r\n' % (filename.encode('utf-8'), len(data),
-                data)
+            return Result(b'file %b %d %b\r\n' % (filename.encode('utf-8'),
+                len(data), data))
         except (IOError, FileNotFoundError):
-            raise ChatError('could not read from file')
+            return Error('could not read from file')
 
     # This dictionary is used to find the proper handler for a message based on
     # its first word.
@@ -345,10 +350,6 @@ class ChatConnection(threading.Thread):
             return row[0]
         else:
             return None
-
-
-class ChatError(Exception):
-    pass
 
 
 def recv_large(sock, n):

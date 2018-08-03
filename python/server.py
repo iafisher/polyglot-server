@@ -113,17 +113,16 @@ class ChatConnection(threading.Thread):
         self.path_to_db = path_to_db
         self.path_to_files = path_to_files
 
-        # Invariant: when self.buffer is non-empty, it always aligns with the
-        # start of a client message.
-        # TODO: Change this to a parameter to receive_message.
-        self.buffer = b''
-
     def run(self):
         self.db = sqlite3.connect(self.path_to_db)
         self.cursor = self.db.cursor()
+
+        # Invariant: when self.buffer is non-empty, it always aligns with the
+        # start of a client message.
+        buffer = b''
         try:
             while True:
-                message = self.receive_message()
+                message, buffer = self.receive_message(buffer)
                 if not message:
                     break
                 first_space = message.find(b' ')
@@ -141,10 +140,10 @@ class ChatConnection(threading.Thread):
             self.socket.close()
             self.db.close()
 
-    def receive_message(self):
-        data = self.socket.recv(1024) if not self.buffer else self.buffer
+    def receive_message(self, buffer):
+        data = self.socket.recv(1024) if not buffer else buffer
         if not data:
-            return b''
+            return b'', buffer
 
         # Find the message terminator.
         end = data.find(b'\r\n')
@@ -152,7 +151,7 @@ class ChatConnection(threading.Thread):
             old_end = len(data)
             data += self.socket.recv(1024)
             if len(data) == old_end:
-                return data
+                return data, b''
             end = data.find(b'\r\n', old_end)
 
         # Special parsing has to be done for the upload message, because the
@@ -175,8 +174,7 @@ class ChatConnection(threading.Thread):
                     data += recv_large(self.socket, length - length_so_far)
                     end = datapos + length
 
-        self.buffer = data[end+2:]
-        return data[:end]
+        return data[:end], data[end+2:]
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_register(self, username, password):

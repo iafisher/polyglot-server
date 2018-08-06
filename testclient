@@ -9,7 +9,7 @@ set -e
 FILE_DIR=tmp_testfiles
 TEST_DB=tmp_testdb.sqlite3
 
-if [[ $# -lt 1 ]]; then
+if [[ $# -ne 1 ]]; then
     echo "Usage: ./testclient <path to server executable>"
     exit 1
 fi
@@ -21,7 +21,7 @@ trap 'kill $(jobs -p)' EXIT
 rm -rf "$FILE_DIR" "$TEST_DB"
 
 mkdir "$FILE_DIR"
-python3 test/bin/createdb.py "$TEST_DB"
+python3 test/createdb.py "$TEST_DB"
 
 # Start the server in the background.
 $1 -f "$FILE_DIR" -d "$TEST_DB" &
@@ -29,19 +29,7 @@ $1 -f "$FILE_DIR" -d "$TEST_DB" &
 # Wait for the server to boot up.
 sleep 0.2
 
-if [[ $# -eq 1 ]]; then
-    testlist=test/test*.txt
-else
-    testlist=${@:2}
-fi
-
-for filename in $testlist; do
-    [ -e "$filename" ] || continue  # Skip glob pattern if no files match.
-    python3 test/bin/testhelper.py "$filename"
-    rm -rf "$FILE_DIR"/* "$TEST_DB"
-    python3 test/bin/createdb.py "$TEST_DB"
-done
-
-python3 test/bin/test_long.py
+# Run the test script.
+python3 test/test_all.py
 
 rm -rf "$FILE_DIR" "$TEST_DB"

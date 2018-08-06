@@ -146,6 +146,8 @@ class ChatConnection(threading.Thread):
                         if isinstance(response, str):
                             response = response.encode('utf-8') + b'\r\n'
                         self.socket.send(response)
+        except ConnectionResetError:
+            pass
         finally:
             self.socket.close()
             self.db.close()

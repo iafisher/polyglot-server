@@ -52,7 +52,7 @@ from collections import defaultdict
 def assert_recv(client, expected, fpath, lineno):
     loc = '{}:{}'.format(fpath, lineno)
     try:
-        data = client.recv(1024)
+        data = client.recv(4096)
     except KeyboardInterrupt:
         sys.stderr.write('Error, {}: expected {!r}, got nothing\n'.format(
             loc, expected))

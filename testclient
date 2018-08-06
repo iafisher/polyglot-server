@@ -42,4 +42,6 @@ for filename in $testlist; do
     python3 test/bin/createdb.py "$TEST_DB"
 done
 
+python3 test/bin/test_long.py
+
 rm -rf "$FILE_DIR" "$TEST_DB"

@@ -120,8 +120,6 @@ class ChatConnection(threading.Thread):
         self.db = sqlite3.connect(self.path_to_db)
         self.cursor = self.db.cursor()
 
-        # Invariant: when self.buffer is non-empty, it always aligns with the
-        # start of a client message.
         buffer = b''
         try:
             while True:
@@ -153,6 +151,20 @@ class ChatConnection(threading.Thread):
             self.db.close()
 
     def receive_message(self, buffer):
+        """Return a tuple (message, buffer), where `message` is a CRLF-
+        terminated bytestring and `buffer` is a bytestring containing whatever
+        data was read on the socket past the end of `message`.
+
+        The initial call to receive_message should pass in an empty bytestring
+        for `buffer`; subsequent calls should pass in the buffer returned by
+        the previous call, e.g.:
+
+            message, buffer = self.receive_message(b'')
+            message, buffer = self.receive_message(buffer)
+
+        This maintains the invariant that `buffer` always aligns with the
+        beginning of a message.
+        """
         data = self.socket.recv(1024) if not buffer else buffer
         if not data:
             return b'', buffer
@@ -273,17 +285,14 @@ class ChatConnection(threading.Thread):
         self.db.commit()
 
         if rows:
-            msgs = []
-            for row in rows:
-                timestamp = row[1]
-                sender = self.id_to_username(row[2])
-                destination = row[3]
-                body = row[5]
-                msgs.append('message {} {} {} {}'.format(timestamp, sender,
-                    destination, body))
-            return Result('\r\n'.join(msgs))
+            return Result('\r\n'.join(map(self.row_to_message, rows)))
         else:
             return Error('inbox is empty')
+
+    def row_to_message(self, row):
+        timestamp, sender, dest, _, body = row[1:]
+        sender = self.id_to_username(sender)
+        return 'message {} {} {} {}'.format(timestamp, sender, dest, body)
 
     @message_handler(nfields=3, ws_in_last_field=True, last_field_binary=True)
     def process_upload(self, filename, filelength, filebytes):

@@ -13,6 +13,12 @@ import sys
 import time
 
 
+# Time to wait, in seconds, before receiving the response to a request. If you
+# get spurious "expected b'...', got nothing" errors, try adjusting this value
+# upwards.
+TIME_TO_WAIT = 0.1
+
+
 def ASSERT(cond, msg, *args):
     try:
         assert cond
@@ -23,7 +29,7 @@ def ASSERT(cond, msg, *args):
 
 
 def ASSERT_EMPTY(client):
-    time.sleep(0.1)
+    time.sleep(TIME_TO_WAIT)
     try:
         data = client.recv(1024, socket.MSG_DONTWAIT)
     except BlockingIOError:
@@ -32,12 +38,17 @@ def ASSERT_EMPTY(client):
         ASSERT(data == b'', 'expected nothing, got {!r}', data)
 
 
-def A(client, request, *responses):
+def A(client, request, response):
+    response = to_bytes(response)
     client.send(to_bytes(request))
-    for response in responses:
-        response = to_bytes(response)
-        data = client.recv(4096)
-        ASSERT(equivalent(response, data), 'expected {!r}, got {!r}', response, data)
+    time.sleep(TIME_TO_WAIT)
+    try:
+        data = client.recv(4096, socket.MSG_DONTWAIT)
+    except BlockingIOError:
+        ASSERT(False, 'expected {!r}, got nothing', response)
+    else:
+        ASSERT(equivalent(response, data), 'expected {!r}, got {!r}',
+            response, data)
 
 
 def new_client(credentials=None):
@@ -136,12 +147,12 @@ A(syntax_user, 'logout', 'success')
 A(syntax_user, 'register jekvnkje ' + 'a'*51, 'error password longer than 50 chars')
 A(syntax_user, 'register jekvnkje ' + 'a'*50, 'success')
 A(syntax_user, 'logout', 'success')
-# - Files longer than 1024 bytes
 
 
 # UPLOAD AND DOWNLOAD
 upload_user = new_client('upload_user pwd')
 A(upload_user, 'listfiles', 'filelist')
+# Try downloading a non-existent file.
 A(upload_user, 'download hello.txt', 'error could not read from file')
 A(upload_user, 'upload hello.txt 6 hello\n', 'success')
 A(upload_user, 'download hello.txt', 'file hello.txt 6 hello\n')
@@ -164,16 +175,43 @@ A(auth_user, 'download hello.txt', 'error must be logged in')
 A(auth_user, 'listfiles', 'error must be logged in')
 
 
+# INCORRECT SYNTAX
+bad_syntax_user = new_client()
+A(bad_syntax_user, 'register', 'error wrong number of fields')
+A(bad_syntax_user, 'register bad_syntax', 'error wrong number of fields')
+A(bad_syntax_user, 'register bad_syntax bad/as[hell)', 'success')
+A(bad_syntax_user, 'logout extra', 'error wrong number of fields')
+A(bad_syntax_user, 'logout', 'success')
+A(bad_syntax_user, 'login bad_syntax', 'error wrong number of fields')
+A(bad_syntax_user, 'login bad_syntax bad/as[hell)', 'success')
+A(bad_syntax_user, 'send iafisher', 'error wrong number of fields')
+A(bad_syntax_user, 'recv extra', 'error wrong number of fields')
+A(bad_syntax_user, 'upload', 'error wrong number of fields')
+A(bad_syntax_user, 'upload whatever.txt', 'error wrong number of fields')
+A(bad_syntax_user, 'upload whatever.txt 100', 'error wrong number of fields')
+A(bad_syntax_user, 'upload whatever.txt 3a abc', 'error invalid length field of upload message')
+
+
 # LONG MESSAGES
-long_user = new_client()
 # Yes, your password can be all whitespace.
-A(long_user, 'register long_user    ', 'success')
+long_user = new_client('long_user    ')
 A(long_user, 'upload long.txt 1025 ' + 'a'*1025, 'success')
 A(long_user, 'download long.txt', 'file long.txt 1025 ' + 'a'*1025)
 # A command that straddles a message boundary.
 A(long_user, 'upload long2.txt 1000 ' + 'a'*1000 + '\r\nlistfiles',
-    'success', 'filelist hello.txt junk.bin long.txt long2.txt')
+    'success\r\nfilelist hello.txt junk.bin long.txt long2.txt')
 
+
+# UTF-8 SUPPORT
+utf8_user = new_client('utf8_юникод мой пароль')
+A(utf8_user, 'logout', 'success')
+A(utf8_user, 'login utf8_юникод мой пароль', 'success')
+A(iafisher, 'send utf8_юникод Hello, 世界!', 'success')
+# Test each message type and a variety of scripts (Cyrillic, Chinese, Sanskrit).
+A(utf8_user, 'recv', 'message <timestamp> iafisher utf8_юникод Hello, 世界!')
+A(utf8_user, 'upload दस्तावेज़ 149 ॐ\nश्रीपरमात्मने नमः\nअथ श्रीमद्भगवद्गीता\nप्रथमोऽध्यायः', 'success')
+A(utf8_user, 'listfiles', 'filelist hello.txt junk.bin long.txt long2.txt दस्तावेज़')
+A(utf8_user, 'download दस्तावेज़', 'file दस्तावेज़ 149 ॐ\nश्रीपरमात्मने नमः\nअथ श्रीमद्भगवद्गीता\nप्रथमोऽध्यायः')
 
 # TRYING TO BREAK THE SERVER
 pentest_user = new_client()
@@ -186,7 +224,14 @@ A(pentest_user, 'register infowarrior prophet of disaster', 'success')
 # Lie about the length of a file upload.
 # Note that there's no point in overstating the size of the file, because the
 # server will just spin until the stated number of bytes are available.
-A(pentest_user, 'upload hacker.exe 3 1234\r\nrecv', 'error no such command', 'error inbox is empty')
+A(pentest_user, 'upload hacker.exe 3 1234\r\nrecv', 'error message not terminated with CRLF\r\nerror inbox is empty')
+A(pentest_user, 'logout', 'success')
+# A password of a single space is allowed (but not encouraged).
+A(pentest_user, 'register pentest  ', 'success')
+A(pentest_user, 'logout', 'success')
+A(pentest_user, 'login pentest  ', 'success')
+# Make sure that a valid message sent after an invalid one is still processed.
+A(pentest_user, 'upload hacker.exe 3a _\r\nrecv', 'error invalid length field of upload message\r\nerror inbox is empty')
 
 
 ASSERT_EMPTY(iafisher)
@@ -194,6 +239,8 @@ ASSERT_EMPTY(bob)
 ASSERT_EMPTY(alice)
 ASSERT_EMPTY(syntax_user)
 ASSERT_EMPTY(upload_user)
-ASSERT_EMPTY(long_user)
 ASSERT_EMPTY(auth_user)
+ASSERT_EMPTY(bad_syntax_user)
+ASSERT_EMPTY(long_user)
+ASSERT_EMPTY(utf8_user)
 ASSERT_EMPTY(pentest_user)

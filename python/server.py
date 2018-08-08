@@ -22,7 +22,6 @@ import threading
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -46,7 +45,8 @@ class ChatServer:
         except PermissionError:
             fatal('Could not bind to port %d (permission denied)', self.port)
         except OSError:
-            fatal('Could not bind to port %d. Is it already in use?', self.port)
+            fatal('Could not bind to port %d. Is it already in use?',
+                self.port)
 
         logger.info('Listening on port %d', self.port)
         self.socket.listen()
@@ -56,6 +56,8 @@ class ChatServer:
                 conn_thread = ChatConnection(conn, self.path_to_db,
                     self.path_to_files)
                 conn_thread.start()
+        except KeyboardInterrupt:
+            pass
         finally:
             self.socket.close()
 
@@ -122,15 +124,24 @@ class ChatConnection(threading.Thread):
         self.path_to_db = path_to_db
         self.path_to_files = path_to_files
 
+        # Contains data from the last recv call that hasn't yet been processed.
+        # The beginning of self.buffer always aligns with the beginning of a
+        # message from the wire.
+        self.buffer = b''
+
     def run(self):
         self.db = sqlite3.connect(self.path_to_db)
         self.cursor = self.db.cursor()
 
         logger.info('Connection opened')
-        buffer = b''
         try:
             while True:
-                message, buffer = self.receive_message(buffer)
+                message, error = self.receive_message()
+                if error is not None:
+                    self.send_and_log(b'error ' + str(error).encode('utf-8')
+                        + b'\r\n')
+                    continue
+
                 logger.info('Received message %r', message)
 
                 first_space = message.find(b' ')
@@ -159,24 +170,17 @@ class ChatConnection(threading.Thread):
             self.socket.close()
             self.db.close()
 
-    def receive_message(self, buffer):
-        """Return a tuple (message, buffer), where `message` is a CRLF-
-        terminated bytestring and `buffer` is a bytestring containing whatever
-        data was read on the socket past the end of `message`.
+    def receive_message(self):
+        """Return a message from the wire and leave any extra data in
+        self.buffer. Return value is a Result type, i.e.
 
-        The initial call to receive_message should pass in an empty bytestring
-        for `buffer`; subsequent calls should pass in the buffer returned by
-        the previous call, e.g.:
-
-            message, buffer = self.receive_message(b'')
-            message, buffer = self.receive_message(buffer)
-
-        This maintains the invariant that `buffer` always aligns with the
-        beginning of a message.
+            message, error = self.receive_message()
+            if error is not None:
+                # Error handling
         """
-        data = self.socket.recv(1024) if not buffer else buffer
+        data = self.socket.recv(1024) if not self.buffer else self.buffer
         if not data:
-            return b'', buffer
+            raise ConnectionResetError
 
         # Find the message terminator.
         end = data.find(b'\r\n')
@@ -184,7 +188,8 @@ class ChatConnection(threading.Thread):
             old_end = len(data)
             data += self.socket.recv(1024)
             if len(data) == old_end:
-                return data, b''
+                self.buffer = b''
+                return Result(data)
             end = data.find(b'\r\n', old_end)
 
         # Special parsing has to be done for the upload message, because the
@@ -198,7 +203,8 @@ class ChatConnection(threading.Thread):
                 try:
                     length = int(data[second_space+1:third_space])
                 except ValueError:
-                    pass
+                    self.buffer = data[end+2:]
+                    return Error('invalid length field of upload message')
                 else:
                     # Now that the length field has been extracted, receiving
                     # the rest of the data is simple.
@@ -206,12 +212,12 @@ class ChatConnection(threading.Thread):
                     length_so_far = len(data) - datapos
                     data += recv_large(self.socket, length - length_so_far)
                     if datapos + length < end:
-                        # This means that payload was not terminated with CRLF,
-                        # which is a client error.
-                        return b'', data[end+2:]
+                        self.buffer = data[end+2:]
+                        return Error('message not terminated with CRLF')
                     end = datapos + length
 
-        return data[:end], data[end+2:]
+        self.buffer = data[end+2:]
+        return Result(data[:end])
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_register(self, username, password):
@@ -289,7 +295,11 @@ class ChatConnection(threading.Thread):
     def process_recv(self):
         # Get all outstanding messages to the user.
         self.cursor.execute('''
-            SELECT * FROM messages WHERE inbox_id=? ORDER BY message_id;
+            SELECT messages.timestamp, users.username, messages.destination,
+                messages.body FROM messages
+                INNER JOIN users ON users.user_id=messages.source_id
+                    AND messages.inbox_id=?
+                ORDER BY messages.message_id;
         ''', (self.uid,))
         rows = self.cursor.fetchall()
 
@@ -300,7 +310,7 @@ class ChatConnection(threading.Thread):
         self.db.commit()
 
         if rows:
-            return Result('\r\n'.join(map(self.row_to_message, rows)))
+            return Result('\r\n'.join('message ' + ' '.join(r) for r in rows))
         else:
             return Error('inbox is empty')
 
@@ -420,10 +430,13 @@ if __name__ == '__main__':
         '%(asctime)s: %(message)s')
     stream_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
 
-    if not args.quiet:
-        logger.addHandler(stream_handler)
-        logger.addHandler(file_handler)
+    if args.quiet:
+        logger.setLevel(logging.CRITICAL)
+    else:
+        logger.setLevel(logging.DEBUG)
 
     try:
         os.mkdir(args.files)

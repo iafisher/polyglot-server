@@ -232,6 +232,9 @@ A(pentest_user, 'logout', 'success')
 A(pentest_user, 'login pentest  ', 'success')
 # Make sure that a valid message sent after an invalid one is still processed.
 A(pentest_user, 'upload hacker.exe 3a _\r\nrecv', 'error invalid length field of upload message\r\nerror inbox is empty')
+# Leave the server hanging.
+pentest_user.send(b'logout')
+pentest_user.close()
 
 
 ASSERT_EMPTY(iafisher)
@@ -243,4 +246,3 @@ ASSERT_EMPTY(auth_user)
 ASSERT_EMPTY(bad_syntax_user)
 ASSERT_EMPTY(long_user)
 ASSERT_EMPTY(utf8_user)
-ASSERT_EMPTY(pentest_user)

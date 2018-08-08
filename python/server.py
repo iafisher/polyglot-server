@@ -130,8 +130,7 @@ class ChatConnection(threading.Thread):
         self.buffer = b''
 
     def run(self):
-        self.db = sqlite3.connect(self.path_to_db)
-        self.cursor = self.db.cursor()
+        self.storage = StorageLayer(self.path_to_db)
 
         logger.info('Connection opened')
         try:
@@ -168,7 +167,7 @@ class ChatConnection(threading.Thread):
         finally:
             logger.info('Connection closed')
             self.socket.close()
-            self.db.close()
+            self.storage.close()
 
     def receive_message(self):
         """Return a message from the wire and leave any extra data in
@@ -188,8 +187,7 @@ class ChatConnection(threading.Thread):
             old_end = len(data)
             data += self.socket.recv(1024)
             if len(data) == old_end:
-                self.buffer = b''
-                return Result(data)
+                raise ConnectionResetError
             end = data.find(b'\r\n', old_end)
 
         # Special parsing has to be done for the upload message, because the
@@ -226,30 +224,18 @@ class ChatConnection(threading.Thread):
         if len(password) > 50:
             return Error('password longer than 50 chars')
 
-        self.cursor.execute('''
-            SELECT username FROM users WHERE username=?;
-        ''', (username,))
-        if self.cursor.fetchone() is None:
-            # NOTE: Storing plaintext passwords is a terrible idea, but this
-            # project is not designed to be cryptographically secure.
-            self.cursor.execute('''
-                INSERT INTO users (username, password)
-                VALUES (?, ?);
-            ''', (username, password))
-            self.uid = self.cursor.lastrowid
-            self.db.commit()
+        user_id = self.storage.get_id_from_username(username)
+        if user_id is None:
+            self.uid = self.storage.create_user(username, password)
             return Result('success')
         else:
             return Error('username is already registered')
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_login(self, username, password):
-        self.cursor.execute('''
-            SELECT user_id FROM users where username=? AND password=?;
-        ''', (username, password))
-        userrow = self.cursor.fetchone()
-        if userrow is not None:
-            self.uid = userrow[0]
+        self.uid = self.storage.get_id_from_username_and_password(username,
+            password)
+        if self.uid is not None:
             return Result('success')
         else:
             return Error('invalid username or password')
@@ -268,56 +254,29 @@ class ChatConnection(threading.Thread):
             self.broadcast_message(message)
             return Result('success')
         else:
-            recipient_id = self.username_to_id(recipient)
+            recipient_id = self.storage.get_id_from_username(recipient)
             if recipient_id is not None:
-                self.store_message(recipient, recipient_id, message)
+                self.storage.create_message(self.uid, recipient, recipient_id,
+                    message)
                 return Result('success')
             else:
                 return Error('recipient does not exist')
 
     def broadcast_message(self, message):
-        self.cursor.execute('SELECT user_id FROM users;')
         # TODO: Can probably make this more efficient.
-        for row in self.cursor.fetchall():
-            recipient_id = row[0]
-            self.store_message('*', recipient_id, message)
-
-    def store_message(self, recipient, recipient_id, message):
-        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
-        self.cursor.execute('''
-            INSERT INTO messages (timestamp, source_id, destination,
-                inbox_id, body)
-            VALUES (?, ?, ?, ?, ?);
-        ''', (timestamp, self.uid, recipient, recipient_id, message))
-        self.db.commit()
+        for recipient_id in self.storage.get_all_user_ids():
+            self.storage.create_message(self.uid, '*', recipient_id, message)
 
     @message_handler(nfields=0)
     def process_recv(self):
-        # Get all outstanding messages to the user.
-        self.cursor.execute('''
-            SELECT messages.timestamp, users.username, messages.destination,
-                messages.body FROM messages
-                INNER JOIN users ON users.user_id=messages.source_id
-                    AND messages.inbox_id=?
-                ORDER BY messages.message_id;
-        ''', (self.uid,))
-        rows = self.cursor.fetchall()
+        messages = self.storage.get_messages_from_recipient_id(self.uid)
+        self.storage.delete_messages_from_recipient_id(self.uid)
 
-        # Delete the messages retrieved.
-        self.cursor.execute('''
-            DELETE FROM messages WHERE inbox_id=?;
-        ''', (self.uid,))
-        self.db.commit()
-
-        if rows:
-            return Result('\r\n'.join('message ' + ' '.join(r) for r in rows))
+        if messages:
+            return Result('\r\n'.join('message ' + ' '.join(m)
+                for m in messages))
         else:
             return Error('inbox is empty')
-
-    def row_to_message(self, row):
-        timestamp, sender, dest, _, body = row[1:]
-        sender = self.id_to_username(sender)
-        return 'message {} {} {} {}'.format(timestamp, sender, dest, body)
 
     @message_handler(nfields=3, ws_in_last_field=True, binary=True)
     def process_upload(self, filename, filelength, filebytes):
@@ -370,26 +329,6 @@ class ChatConnection(threading.Thread):
         b'download': process_download,
     }
 
-    def username_to_id(self, username):
-        self.cursor.execute('''
-            SELECT user_id FROM users WHERE username=?;
-        ''', (username,))
-        row = self.cursor.fetchone()
-        if row is not None:
-            return row[0]
-        else:
-            return None
-
-    def id_to_username(self, uid):
-        self.cursor.execute('''
-            SELECT username FROM users WHERE user_id=?;
-        ''', (uid,))
-        row = self.cursor.fetchone()
-        if row is not None:
-            return row[0]
-        else:
-            return None
-
     def send_and_log(self, msg):
         logger.info('Sending message %r', msg)
         self.socket.send(msg)
@@ -399,13 +338,77 @@ def recv_large(sock, n):
     """Receive n bytes, where n is potentially a very large number."""
     data = b''
     while len(data) < n:
-        data += sock.recv(max(1024, n - len(data)))
+        data += sock.recv(max(4096, n - len(data)))
     return data
 
 
 def fatal(msg, *args, retcode=2):
+    """Log a critical error and bail."""
     logger.critical(msg, *args)
     sys.exit(retcode)
+
+
+class StorageLayer:
+    """An abstraction over the SQLite3 database."""
+
+    def __init__(self, path_to_db):
+        self.db = sqlite3.connect(path_to_db)
+        self.cursor = self.db.cursor()
+
+    def get_id_from_username(self, username):
+        self.cursor.execute('SELECT user_id FROM users WHERE username=?;',
+            (username,))
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def get_id_from_username_and_password(self, username, password):
+        self.cursor.execute('''
+            SELECT user_id FROM users WHERE username=? AND password=?;
+        ''', (username, password))
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def get_all_user_ids(self):
+        self.cursor.execute('SELECT user_id FROM users;')
+        return [row[0] for row in self.cursor.fetchall()]
+
+    def get_messages_from_recipient_id(self, recipient_id):
+        self.cursor.execute('''
+            SELECT messages.timestamp, users.username, messages.destination,
+                messages.body FROM messages
+                INNER JOIN users ON users.user_id=messages.source_id
+                    AND messages.inbox_id=?
+                ORDER BY messages.message_id;
+        ''', (recipient_id,))
+        return self.cursor.fetchall()
+
+    def create_message(self, sender_id, recipient, recipient_id, message):
+        timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
+        self.cursor.execute('''
+            INSERT INTO messages (timestamp, source_id, destination, inbox_id,
+                body)
+            VALUES (?, ?, ?, ?, ?);
+        ''', (timestamp, sender_id, recipient, recipient_id, message))
+        self.db.commit()
+        return self.cursor.lastrowid
+
+    def create_user(self, username, password):
+        # NOTE: Storing plaintext passwords is a terrible idea, but this
+        # project is not designed to be cryptographically secure.
+        self.cursor.execute('''
+            INSERT INTO users (username, password) VALUES (?, ?);
+        ''', (username, password))
+        self.db.commit()
+        return self.cursor.lastrowid
+
+    def delete_messages_from_recipient_id(self, recipient_id):
+        self.cursor.execute('''
+            DELETE FROM messages WHERE inbox_id=?;
+        ''', (recipient_id,))
+        self.db.commit()
+
+    def close(self):
+        self.db.close()
 
 
 if __name__ == '__main__':

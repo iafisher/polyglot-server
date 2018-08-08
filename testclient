@@ -24,7 +24,7 @@ mkdir "$FILE_DIR"
 python3 test/createdb.py "$TEST_DB"
 
 # Start the server in the background.
-$1 -f "$FILE_DIR" -d "$TEST_DB" &
+$1 -q -f "$FILE_DIR" -d "$TEST_DB" &
 
 # Wait for the server to boot up.
 sleep 0.2

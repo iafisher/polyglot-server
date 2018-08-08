@@ -4,7 +4,7 @@
 See the top-level directory's README file for details.
 
 Author:  Ian Fisher (iafisher@protonmail.com)
-Version: July 2018
+Version: August 2018
 
 TODO: Use SQL joins.
     https://www.w3schools.com/sql/sql_join.asp
@@ -13,6 +13,7 @@ TODO: Use SQL joins.
 import argparse
 import datetime
 import functools
+import logging
 import os
 import socket
 import sqlite3
@@ -20,10 +21,15 @@ import sys
 import threading
 
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 
 FILE_DIR = os.path.join(BASE_DIR, 'files')
 DB_FILE = os.path.join(BASE_DIR, 'db.sqlite3')
+LOG_FILE = os.path.join(BASE_DIR, 'log', 'server.log')
 SERVER_PORT = 8888
 
 
@@ -38,12 +44,11 @@ class ChatServer:
         try:
             self.socket.bind((socket.gethostbyname('localhost'), self.port))
         except PermissionError:
-            fatal('Error: could not bind to port {} (permission denied)\n'
-                .format(self.port))
+            fatal('Could not bind to port %d (permission denied)', self.port)
         except OSError:
-            fatal('Error: could not bind to port {}. Is it already in use?\n'
-                .format(self.port))
+            fatal('Could not bind to port %d. Is it already in use?', self.port)
 
+        logger.info('Listening on port %d', self.port)
         self.socket.listen()
         try:
             while True:
@@ -61,7 +66,7 @@ Result = lambda r: (r, None)
 Error = lambda e: (None, e)
 
 
-def message_handler(nfields, ws_in_last_field=False, auth=True, last_field_binary=False):
+def message_handler(nfields, ws_in_last_field=False, auth=True, binary=False):
     """A decorator for handler methods in the ChatConnection class.
 
     The decorator splits the message bytes into fields and sends an error if
@@ -72,30 +77,31 @@ def message_handler(nfields, ws_in_last_field=False, auth=True, last_field_binar
             excluding the command name itself?
         ws_in_last_field: Does the last field allow whitespace?
         auth: Must the user be logged in?
-        last_field_binary: Does the last field allow arbitrary bytes?
+        binary: Can the message contain arbitrary bytes?
     """
 
     def wraps(f):
         @functools.wraps(f)
         def wrapped(self, message):
+            if binary is False:
+                try:
+                    message = message.decode('utf-8')
+                except UnicodeDecodeError:
+                    return Error('invalid UTF-8')
+
             if auth and self.uid is None:
                 return Error('must be logged in')
             elif not auth and self.uid is not None:
                 return Error('must not be logged in')
 
+            sep = b' ' if binary else ' '
             if ws_in_last_field:
                 try:
-                    args = message.split(b' ', maxsplit=nfields)
+                    args = message.split(sep, maxsplit=nfields)
                 except ValueError:
                     return Error('wrong number of fields')
             else:
-                args = message.split(b' ')
-
-            for i, arg in enumerate(args[:-1] if last_field_binary else args):
-                try:
-                    args[i] = arg.decode('utf-8')
-                except UnicodeDecodeError:
-                    return Error('invalid UTF-8')
+                args = message.split(sep)
 
             # Remove the command name.
             args.pop(0)
@@ -120,12 +126,12 @@ class ChatConnection(threading.Thread):
         self.db = sqlite3.connect(self.path_to_db)
         self.cursor = self.db.cursor()
 
+        logger.info('Connection opened')
         buffer = b''
         try:
             while True:
                 message, buffer = self.receive_message(buffer)
-                if not message:
-                    break
+                logger.info('Received message %r', message)
 
                 first_space = message.find(b' ')
                 if first_space == -1:
@@ -136,19 +142,20 @@ class ChatConnection(threading.Thread):
                 try:
                     handler = self.dispatch[cmd]
                 except KeyError:
-                    self.socket.send(b'error no such command\r\n')
+                    self.send_and_log(b'error no such command\r\n')
                 else:
                     response, error = handler(self, message)
                     if error is not None:
-                        self.socket.send(b'error ' + error.encode('utf-8')
+                        self.send_and_log(b'error ' + error.encode('utf-8')
                             + b'\r\n')
                     else:
                         if isinstance(response, str):
                             response = response.encode('utf-8') + b'\r\n'
-                        self.socket.send(response)
-        except ConnectionResetError:
+                        self.send_and_log(response)
+        except (ConnectionResetError, BrokenPipeError):
             pass
         finally:
+            logger.info('Connection closed')
             self.socket.close()
             self.db.close()
 
@@ -198,6 +205,10 @@ class ChatConnection(threading.Thread):
                     datapos = third_space + 1
                     length_so_far = len(data) - datapos
                     data += recv_large(self.socket, length - length_so_far)
+                    if datapos + length < end:
+                        # This means that payload was not terminated with CRLF,
+                        # which is a client error.
+                        return b'', data[end+2:]
                     end = datapos + length
 
         return data[:end], data[end+2:]
@@ -206,6 +217,8 @@ class ChatConnection(threading.Thread):
     def process_register(self, username, password):
         if len(username) > 30:
             return Error('username longer than 30 chars')
+        if len(password) > 50:
+            return Error('password longer than 50 chars')
 
         self.cursor.execute('''
             SELECT username FROM users WHERE username=?;
@@ -296,8 +309,13 @@ class ChatConnection(threading.Thread):
         sender = self.id_to_username(sender)
         return 'message {} {} {} {}'.format(timestamp, sender, dest, body)
 
-    @message_handler(nfields=3, ws_in_last_field=True, last_field_binary=True)
+    @message_handler(nfields=3, ws_in_last_field=True, binary=True)
     def process_upload(self, filename, filelength, filebytes):
+        try:
+            filename = filename.decode('utf-8')
+        except UnicodeDecodeError:
+            return Error('invalid UTF-8')
+
         fullname = os.path.join(self.path_to_files, filename)
         if not os.path.isfile(fullname):
             try:
@@ -362,6 +380,10 @@ class ChatConnection(threading.Thread):
         else:
             return None
 
+    def send_and_log(self, msg):
+        logger.info('Sending message %r', msg)
+        self.socket.send(msg)
+
 
 def recv_large(sock, n):
     """Receive n bytes, where n is potentially a very large number."""
@@ -371,12 +393,13 @@ def recv_large(sock, n):
     return data
 
 
-def fatal(msg, retcode=2):
-    sys.stderr.write(msg)
+def fatal(msg, *args, retcode=2):
+    logger.critical(msg, *args)
     sys.exit(retcode)
 
 
 if __name__ == '__main__':
+    # Parse command-line arguments.
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--database', default=DB_FILE,
         help='path to a SQLite3 database to use')
@@ -384,16 +407,31 @@ if __name__ == '__main__':
         help='path to a directory to hold files uploaded to the server')
     parser.add_argument('-p', '--port', default=SERVER_PORT, type=int,
         help='port for the server to listen on')
+    parser.add_argument('-q', '--quiet', action='store_true', default=False,
+        help='turn off logging')
     args = parser.parse_args()
+
+    # Configure logging.
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('[%(levelname)s] (%(threadName)s) '
+        '%(asctime)s: %(message)s')
+    stream_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    if not args.quiet:
+        logger.addHandler(stream_handler)
+        logger.addHandler(file_handler)
 
     try:
         os.mkdir(args.files)
     except FileExistsError:
         pass
     except OSError:
-        msg = 'Error: {} does not exist and could not be created\n'.format(
+        fatal('File folder %s does not exist and could not be created',
             args.files)
-        fatal(msg)
 
     server = ChatServer(args.port, args.database, args.files)
     server.run_forever()

@@ -131,9 +131,11 @@ A(syntax_user, 'register ' + 'a'*30 + ' pwd', 'success')
 A(syntax_user, 'logout', 'success')
 # 30 characters, not bytes.
 A(syntax_user, 'register дддддддддддддддддддддддддддддд pwd', 'success')
-# TODO:
-# - Passwords longer than 50 chars
-# - Invalid UTF-8
+A(syntax_user, 'logout', 'success')
+# Password cannot be longer than 50 characters.
+A(syntax_user, 'register jekvnkje ' + 'a'*51, 'error password longer than 50 chars')
+A(syntax_user, 'register jekvnkje ' + 'a'*50, 'success')
+A(syntax_user, 'logout', 'success')
 # - Files longer than 1024 bytes
 
 
@@ -162,9 +164,36 @@ A(auth_user, 'download hello.txt', 'error must be logged in')
 A(auth_user, 'listfiles', 'error must be logged in')
 
 
+# LONG MESSAGES
+long_user = new_client()
+# Yes, your password can be all whitespace.
+A(long_user, 'register long_user    ', 'success')
+A(long_user, 'upload long.txt 1025 ' + 'a'*1025, 'success')
+A(long_user, 'download long.txt', 'file long.txt 1025 ' + 'a'*1025)
+# A command that straddles a message boundary.
+A(long_user, 'upload long2.txt 1000 ' + 'a'*1000 + '\r\nlistfiles',
+    'success', 'filelist hello.txt junk.bin long.txt long2.txt')
+
+
+# TRYING TO BREAK THE SERVER
+pentest_user = new_client()
+A(pentest_user, b'\r\n', 'error no such command')
+# Server shouldn't crash when client closes connection.
+pentest_user.send(b'logout\r\n')
+pentest_user.close()
+pentest_user = new_client()
+A(pentest_user, 'register infowarrior prophet of disaster', 'success')
+# Lie about the length of a file upload.
+# Note that there's no point in overstating the size of the file, because the
+# server will just spin until the stated number of bytes are available.
+A(pentest_user, 'upload hacker.exe 3 1234\r\nrecv', 'error no such command', 'error inbox is empty')
+
+
 ASSERT_EMPTY(iafisher)
 ASSERT_EMPTY(bob)
 ASSERT_EMPTY(alice)
 ASSERT_EMPTY(syntax_user)
 ASSERT_EMPTY(upload_user)
+ASSERT_EMPTY(long_user)
 ASSERT_EMPTY(auth_user)
+ASSERT_EMPTY(pentest_user)

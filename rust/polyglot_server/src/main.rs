@@ -31,34 +31,46 @@ fn main() {
 
 
 impl ChatConnection {
-    pub fn new(mut stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream) -> Self {
         ChatConnection { stream, buffer: [0; 1024] }
     }
 
     pub fn run(&mut self) {
         loop {
-            let message = self.receive_message();
-            self.stream.write(message).expect("Could not write to socket");
-            self.stream.flush().expect("Could not flush the socket");
+            if let Some(message) = self.receive_message() {
+                println!("{:?}", message);
+                self.stream.write(&message[..]).expect("Could not write to socket");
+                self.stream.flush().expect("Could not flush the socket");
+            } else {
+                break;
+            }
         }
     }
 
-    fn receive_message(&mut self) -> &[u8] {
-        let mut data = if self.buffer.len() > 0 {
-            self.buffer
+    fn receive_message(&mut self) -> Option<Vec<u8>> {
+        let mut data = Vec::with_capacity(1024);
+        if self.buffer.len() > 0 {
+            data.extend_from_slice(&self.buffer);
         } else {
-            self.stream.read(&mut data).expect("Could not read from socket")
+            self.stream.read(&mut data).expect("Could not read from socket");
         };
 
-        let crlf_pos = find_crlf(&data[..]);
+        let mut crlf_pos = find_crlf(&data[..]);
         loop {
             match crlf_pos {
                 Some(pos) => {
                     let old_end = data.len();
+                    self.stream.read(&mut data).expect("Could not read from socket");
+                    if data.len() == old_end {
+                        return None;
+                    }
+                    crlf_pos = find_crlf(&data[(pos+2)..]);
                 },
-                None => break
+                None => break,
             }
         }
+
+        Some(data)
     }
 }
 

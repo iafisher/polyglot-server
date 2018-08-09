@@ -6,17 +6,8 @@ __pycache__
 *.pyc
 *.pyo
 
-# Rust files
-/rust/polyglot_server/target
-
 # Database files
 *.sqlite3
-
-# File server files
-/python/files/*
-!/python/files/.gitkeep
-/python/log/*
-!/python/log/.gitkeep
 
 # Files created temporarily by the test script
 /tmp_testfiles

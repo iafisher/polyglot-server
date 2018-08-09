@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """A Python implementation of the polyglot-server project.
 
-See the top-level directory's README file for details.
+See the top-level directory's README for details.
 
 Author:  Ian Fisher (iafisher@protonmail.com)
 Version: August 2018
-
-TODO: Use SQL joins.
-    https://www.w3schools.com/sql/sql_join.asp
 """
 
 import argparse

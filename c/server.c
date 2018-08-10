@@ -8,7 +8,6 @@
  */
 #include <netinet/in.h>
 #include <pthread.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,60 +20,60 @@
 static unsigned short flag_quiet = 0;
 
 
-void log_info(const char*, ...);
+void log_info(const char*);
+void log_fatal(const char*);
+
+
+#define LOG_INFO(message, ...) \
+    do { \
+        fprintf(stderr, "[info] " message "\n", __VA_ARGS__); \
+    } while (0)
 
 
 #define LOG_FATAL(message, ...) \
     do { \
         fprintf(stderr, "[critical ]" message "\n", __VA_ARGS__); \
-        exit(2);
+        exit(2); \
     } while (0)
 
 
 void run_forever(unsigned int port, const char* path_to_db,
         const char* path_to_files);
+
 void* handle_connection(void* sockptr);
 
 void* emalloc(size_t);
 
 
-#define OPT(arg, shortname, longname) \
-    (strcmp(arg, shortname) == 0 || strcmp(arg, longname) == 0)
+// A macro tailored to parsing command-line arguments.
+#define OPT(sname, lname, store) \
+    } else if (strcmp(argv[i], sname) == 0 || strcmp(argv[i], lname) == 0) { \
+        if (i == argc - 1) { \
+            fputs("Error: " sname " or " lname " not followed by arg.\n", \
+                stderr); \
+            return 2; \
+        } \
+        store = argv[++i]; \
 
 
 int main(int argc, char* argv[]) {
-    unsigned int port = 8888;
+    const char* port_as_str = "8888";
     const char* path_to_db = "db.sqlite3";
     const char* path_to_files = "files";
 
     for (int i = 1; i < argc; i++) {
-        if (OPT(argv[i], "-q", "--quiet")) {
+        if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
             flag_quiet = 1;
-        } else if (OPT(argv[i], "-d", "--database")) {
-            if (i == argc - 1) {
-                fputs("Error: -d or --database not followed by database.\n", stderr);
-                return 2;
-            }
-            path_to_db = argv[++i];
-        } else if (OPT(argv[i], "-p", "--port")) {
-            if (i == argc - 1) {
-                fputs("Error: -p or --port not followed by port.\n", stderr);
-                return 2;
-            }
-            port = atoi(argv[++i]);
-        } else if (OPT(argv[i], "-f", "--files")) {
-            if (i == argc - 1) {
-                fputs("Error: -f or --files not followed by file path.\n", stderr);
-                return 2;
-            }
-            path_to_files = argv[++i];
+        OPT("-d", "--database", path_to_db)
+        OPT("-f", "--files", path_to_files)
+        OPT("-p", "--port", port_as_str)
         } else {
             fprintf(stderr, "Error: unrecognized argument \"%s\"\n", argv[i]);
             return 2;
         }
     }
 
-    run_forever(port, path_to_db, path_to_files);
+    run_forever(atoi(port_as_str), path_to_db, path_to_files);
     return 0;
 }
 
@@ -83,7 +82,7 @@ void run_forever(unsigned int port, const char* path_to_db,
         const char* path_to_files) {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        LOG_FATAL("Could not open socket");
+        log_fatal("Could not open socket");
     }
 
     struct sockaddr_in address;
@@ -92,12 +91,14 @@ void run_forever(unsigned int port, const char* path_to_db,
     address.sin_port = htons(port);
 
     if (bind(server_fd, (struct sockaddr*)&address, sizeof address) < 0) {
-        LOG_FATAL("Could not bind to socket");
+        log_fatal("Could not bind to socket");
     }
 
     if (listen(server_fd, 5) < 0) {
-        LOG_FATAL("Could not listen to socket");
+        log_fatal("Could not listen to socket");
     }
+
+    LOG_INFO("Listening on port %d", port);
 
     int new_socket;
     socklen_t addrlen = sizeof address;
@@ -106,7 +107,7 @@ void run_forever(unsigned int port, const char* path_to_db,
         int* sockptr = emalloc(sizeof *sockptr);
         *sockptr = new_socket;
         if (pthread_create(&thread_id, NULL, handle_connection, (void*)sockptr) != 0) {
-            LOG_FATAL("Could not spawn thread");
+            log_fatal("Could not spawn thread");
         }
     }
 }
@@ -118,10 +119,13 @@ void run_forever(unsigned int port, const char* path_to_db,
 void* handle_connection(void* sockptr) {
     int conn = *(int*)sockptr;
 
+    log_info("Connection opened");
+
     char buffer[BUFSIZE];
     while (1) {
         ssize_t nbytes = read(conn, buffer, BUFSIZE);
         if (nbytes > 0) {
+            LOG_INFO("Received message \"%.*s\"", (int)nbytes, buffer);
             write(conn, buffer, nbytes);
         } else {
             break;
@@ -133,22 +137,22 @@ void* handle_connection(void* sockptr) {
 }
 
 
-void log_info(const char* message, ...) {
+void log_info(const char* message) {
     if (!flag_quiet) {
-        va_list args;
-        va_start(args, message);
-        fprintf(stderr, "[info] ");
-        vfprintf(stderr, message, args);
-        va_end(args);
+        fprintf(stderr, "[info] %s\n", message);
     }
 }
 
+
+void log_fatal(const char* message) {
+    fprintf(stderr, "[critical] %s\n", message);
+}
 
 
 void* emalloc(size_t nbytes) {
     void* ret = malloc(nbytes);
     if (ret == NULL) {
-        LOG_FATAL("Out of memory");
+        log_fatal("Out of memory");
     }
     return ret;
 }

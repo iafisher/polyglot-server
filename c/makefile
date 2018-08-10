@@ -1,8 +1,9 @@
 CC = gcc
-FLAGS = -Wall -Werror -std=c99 -pedantic
+CFLAGS = -Wall -Werror -std=c99 -pedantic
+LFLAGS = -lpthread
 
 server: server.c
-	$(CC) $(FLAGS) server.c -o server
+	$(CC) $(CFLAGS) server.c -o server $(LFLAGS)
 
 .PHONY: clean
 

@@ -110,11 +110,10 @@ the above requirements.
 
 ## Implementations
 The full project is currently implemented in the following languages:
- - None yet!
+ - Python
 
 I plan to implement it in these languages in the future:
  - C
- - Python
  - Rust
  - Go
  - Java

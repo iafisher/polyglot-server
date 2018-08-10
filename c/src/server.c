@@ -6,6 +6,7 @@
  * Author:  Ian Fisher (iafisher@protonmail.com)
  * Version: August 2018
  */
+
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -14,27 +15,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-
-
-// Command-line flags.
-static unsigned short flag_quiet = 0;
-
-
-void log_info(const char*);
-void log_fatal(const char*);
-
-
-#define LOG_INFO(message, ...) \
-    do { \
-        fprintf(stderr, "[info] " message "\n", __VA_ARGS__); \
-    } while (0)
-
-
-#define LOG_FATAL(message, ...) \
-    do { \
-        fprintf(stderr, "[critical ]" message "\n", __VA_ARGS__); \
-        exit(2); \
-    } while (0)
+#include "log.h"
 
 
 void run_forever(unsigned int port, const char* path_to_db,
@@ -63,7 +44,7 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
-            flag_quiet = 1;
+            set_logging_level(LOG_LVL_INFO);
         OPT("-d", "--database", path_to_db)
         OPT("-f", "--files", path_to_files)
         OPT("-p", "--port", port_as_str)
@@ -98,7 +79,7 @@ void run_forever(unsigned int port, const char* path_to_db,
         log_fatal("Could not listen to socket");
     }
 
-    LOG_INFO("Listening on port %d", port);
+    log_info("Listening on port %d", port);
 
     int new_socket;
     socklen_t addrlen = sizeof address;
@@ -125,7 +106,7 @@ void* handle_connection(void* sockptr) {
     while (1) {
         ssize_t nbytes = read(conn, buffer, BUFSIZE);
         if (nbytes > 0) {
-            LOG_INFO("Received message \"%.*s\"", (int)nbytes, buffer);
+            log_info("Received message \"%.*s\"", (int)nbytes, buffer);
             write(conn, buffer, nbytes);
         } else {
             break;
@@ -134,18 +115,6 @@ void* handle_connection(void* sockptr) {
 
     free(sockptr);
     return NULL;
-}
-
-
-void log_info(const char* message) {
-    if (!flag_quiet) {
-        fprintf(stderr, "[info] %s\n", message);
-    }
-}
-
-
-void log_fatal(const char* message) {
-    fprintf(stderr, "[critical] %s\n", message);
 }
 
 

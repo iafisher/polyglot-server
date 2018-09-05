@@ -4,7 +4,7 @@
 See the top-level directory's README for details.
 
 Author:  Ian Fisher (iafisher@protonmail.com)
-Version: August 2018
+Version: September 2018
 """
 
 import argparse
@@ -50,8 +50,9 @@ class ChatServer:
         try:
             while True:
                 conn, addr = self.socket.accept()
-                conn_thread = ChatConnection(conn, self.path_to_db,
-                    self.path_to_files)
+                conn_thread = ChatConnection(
+                    conn, self.path_to_db, self.path_to_files
+                )
                 conn_thread.start()
         except KeyboardInterrupt:
             pass
@@ -134,8 +135,9 @@ class ChatConnection(threading.Thread):
             while True:
                 message, error = self.receive_message()
                 if error is not None:
-                    self.send_and_log(b'error ' + str(error).encode('utf-8')
-                        + b'\r\n')
+                    self.send_and_log(
+                        b'error ' + str(error).encode('utf-8') + b'\r\n'
+                    )
                     continue
 
                 logger.info('Received message %r', message)
@@ -153,8 +155,9 @@ class ChatConnection(threading.Thread):
                 else:
                     response, error = handler(self, message)
                     if error is not None:
-                        self.send_and_log(b'error ' + error.encode('utf-8')
-                            + b'\r\n')
+                        self.send_and_log(
+                            b'error ' + error.encode('utf-8') + b'\r\n'
+                        )
                     else:
                         if isinstance(response, str):
                             response = response.encode('utf-8') + b'\r\n'
@@ -230,8 +233,9 @@ class ChatConnection(threading.Thread):
 
     @message_handler(nfields=2, auth=False, ws_in_last_field=True)
     def process_login(self, username, password):
-        self.uid = self.storage.get_id_from_username_and_password(username,
-            password)
+        self.uid = self.storage.get_id_from_username_and_password(
+            username, password
+        )
         if self.uid is not None:
             return Result('success')
         else:
@@ -253,8 +257,9 @@ class ChatConnection(threading.Thread):
         else:
             recipient_id = self.storage.get_id_from_username(recipient)
             if recipient_id is not None:
-                self.storage.create_message(self.uid, recipient, recipient_id,
-                    message)
+                self.storage.create_message(
+                    self.uid, recipient, recipient_id, message
+                )
                 return Result('success')
             else:
                 return Error('recipient does not exist')
@@ -353,15 +358,17 @@ class StorageLayer:
         self.cursor = self.db.cursor()
 
     def get_id_from_username(self, username):
-        self.cursor.execute('SELECT user_id FROM users WHERE username=?;',
-            (username,))
+        self.cursor.execute(
+            'SELECT user_id FROM users WHERE username=?;', (username,)
+        )
         row = self.cursor.fetchone()
         return row[0] if row else None
 
     def get_id_from_username_and_password(self, username, password):
-        self.cursor.execute('''
-            SELECT user_id FROM users WHERE username=? AND password=?;
-        ''', (username, password))
+        self.cursor.execute(
+            'SELECT user_id FROM users WHERE username=? AND password=?;',
+            (username, password)
+        )
         row = self.cursor.fetchone()
         return row[0] if row else None
 
@@ -370,38 +377,45 @@ class StorageLayer:
         return [row[0] for row in self.cursor.fetchall()]
 
     def get_messages_from_recipient_id(self, recipient_id):
-        self.cursor.execute('''
+        self.cursor.execute(
+            '''
             SELECT messages.timestamp, users.username, messages.destination,
                 messages.body FROM messages
                 INNER JOIN users ON users.user_id=messages.source_id
                     AND messages.inbox_id=?
                 ORDER BY messages.message_id;
-        ''', (recipient_id,))
+            ''',
+            (recipient_id,)
+        )
         return self.cursor.fetchall()
 
     def create_message(self, sender_id, recipient, recipient_id, message):
         timestamp = datetime.datetime.utcnow().isoformat() + 'Z'
-        self.cursor.execute('''
+        self.cursor.execute(
+            '''
             INSERT INTO messages (timestamp, source_id, destination, inbox_id,
                 body)
             VALUES (?, ?, ?, ?, ?);
-        ''', (timestamp, sender_id, recipient, recipient_id, message))
+            ''',
+            (timestamp, sender_id, recipient, recipient_id, message)
+        )
         self.db.commit()
         return self.cursor.lastrowid
 
     def create_user(self, username, password):
         # NOTE: Storing plaintext passwords is a terrible idea, but this
         # project is not designed to be cryptographically secure.
-        self.cursor.execute('''
-            INSERT INTO users (username, password) VALUES (?, ?);
-        ''', (username, password))
+        self.cursor.execute(
+            'INSERT INTO users (username, password) VALUES (?, ?);',
+            (username, password)
+        )
         self.db.commit()
         return self.cursor.lastrowid
 
     def delete_messages_from_recipient_id(self, recipient_id):
-        self.cursor.execute('''
-            DELETE FROM messages WHERE inbox_id=?;
-        ''', (recipient_id,))
+        self.cursor.execute(
+            'DELETE FROM messages WHERE inbox_id=?;', (recipient_id,)
+        )
         self.db.commit()
 
     def close(self):
@@ -426,8 +440,9 @@ if __name__ == '__main__':
     stream_handler.setLevel(logging.DEBUG)
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter('[%(levelname)s] (%(threadName)s) '
-        '%(asctime)s: %(message)s')
+    formatter = logging.Formatter(
+        '[%(levelname)s] (%(threadName)s) %(asctime)s: %(message)s'
+    )
     stream_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
@@ -443,8 +458,9 @@ if __name__ == '__main__':
     except FileExistsError:
         pass
     except OSError:
-        fatal('File folder %s does not exist and could not be created',
-            args.files)
+        fatal(
+            'File folder %s does not exist and could not be created', args.files
+        )
 
     server = ChatServer(args.port, args.database, args.files)
     server.run_forever()
